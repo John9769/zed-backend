@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const Groq = require('groq-sdk');
+const { buildRagContext } = require('../utils/ragSearch');
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
@@ -108,7 +109,7 @@ const buildMemoryContext = async (studentId, subject) => {
 // BUILD ZED SYSTEM PROMPT
 // ============================================================
 
-const buildSystemPrompt = (student, subject, memoryContext) => {
+const buildSystemPrompt = (student, subject, memoryContext, ragContext = '') => {
   return `You are ZED — an AI educational BFF (Best Friend Forever) for Malaysian SPM students.
 You are NOT a generic chatbot. You are specifically built for Form 4 and Form 5 students studying for SPM Malaysia.
 
@@ -135,6 +136,8 @@ Subject: ${subject}
 Form: SPM (Form 4/5)
 
 ${memoryContext}
+
+${ragContext}
 
 SUBJECT CONTEXT (${subject}):
 ${getSubjectContext(subject)}
@@ -278,8 +281,11 @@ const sendMessage = async (req, res) => {
       }
     });
 
-    // 5. Build memory context
-    const memoryContext = await buildMemoryContext(studentId, subject);
+    // 5. Build memory context + RAG context
+    const [memoryContext, ragContext] = await Promise.all([
+      buildMemoryContext(studentId, subject),
+      buildRagContext(subject, message)
+    ]);
 
     // 6. Get student info
     const student = await prisma.student.findUnique({
@@ -287,7 +293,7 @@ const sendMessage = async (req, res) => {
     });
 
     // 7. Build system prompt with memory
-    const systemPrompt = buildSystemPrompt(student, subject, memoryContext);
+    const systemPrompt = buildSystemPrompt(student, subject, memoryContext, ragContext);
 
     // 8. Build conversation history for Groq
     const conversationHistory = session.messages.map(msg => ({
