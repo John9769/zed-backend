@@ -1,0 +1,429 @@
+// ============================================================
+// ZED PRISMA SCHEMA — PRODUCTION FINAL
+// Platform: AI Educational BFF for Form 4 & Form 5 Malaysia
+// DB: Neon PostgreSQL | AI: Groq | WhatsApp: UltraMsg | Pay: Billplz
+// Registration: Student → WhatsApp Parent → Parent Pays → Student Active
+// No trial. No guest. No exceptions.
+// ============================================================
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ============================================================
+// ADMIN
+// ============================================================
+
+model Admin {
+  id           String    @id @default(uuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  role         AdminRole @default(STAFF)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  STAFF
+}
+
+// ============================================================
+// PARENT
+// Parents are NOT users. They receive WhatsApp, pay, done.
+// No login. No password. Just a contact + payer record.
+// One parent can have multiple students (siblings).
+// ============================================================
+
+model Parent {
+  id           String         @id @default(uuid())
+  name         String
+  whatsapp     String         @unique
+  email        String?
+  relationship ParentRelation @default(FATHER)
+  students     Student[]
+  payments     Payment[]
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+}
+
+enum ParentRelation {
+  FATHER
+  MOTHER
+  GUARDIAN
+}
+
+// ============================================================
+// STUDENT
+// ============================================================
+
+model Student {
+  id                   String                   @id @default(uuid())
+  name                 String
+  email                String?
+  mobile               String                   @unique
+  age                  Int?
+  passwordHash         String
+
+  parent               Parent                   @relation(fields: [parentId], references: [id])
+  parentId             String
+
+  parentApprovalToken  String?                  @unique
+  parentTokenExpiry    DateTime?
+  parentApprovedAt     DateTime?
+
+  referralCode         String                   @unique
+  inviteCode           String?
+
+  status               StudentStatus            @default(PENDING)
+  isFirstAdopter       Boolean                  @default(false)
+
+  subscription         Subscription?
+  subjectAccess        StudentSubjectAccess[]
+  subjectProgress      StudentSubjectProgress[]
+  referralsSent        Referral[]               @relation("ReferralsSent")
+  referralsReceived    Referral[]               @relation("ReferralsReceived")
+  zedCredits           ZedCredit?
+  creditTransactions   ZedCreditTransaction[]
+  chatSessions         ChatSession[]
+  moodLogs             StudentMoodLog[]
+  milestones           StudentMilestone[]
+  questionAttempts     QuestionAttempt[]
+  approvalLogs         StudentApprovalLog[]
+
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+}
+
+enum StudentStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  EXPIRED
+}
+
+// ============================================================
+// STUDENT APPROVAL LOG
+// ============================================================
+
+model StudentApprovalLog {
+  id          String   @id @default(uuid())
+  student     Student  @relation(fields: [studentId], references: [id])
+  studentId   String
+  action      String
+  triggeredBy String
+  note        String?
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+}
+
+// ============================================================
+// SUBSCRIPTION
+// ============================================================
+
+model Subscription {
+  id          String           @id @default(uuid())
+  tier        SubscriptionTier
+  price       Float
+  startDate   DateTime
+  endDate     DateTime
+  isActive    Boolean          @default(true)
+  student     Student          @relation(fields: [studentId], references: [id])
+  studentId   String           @unique
+  payments    Payment[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+enum SubscriptionTier {
+  THREE_SUBJECTS
+  FIVE_SUBJECTS
+}
+
+// ============================================================
+// PAYMENT
+// ============================================================
+
+model Payment {
+  id             String        @id @default(uuid())
+  parent         Parent        @relation(fields: [parentId], references: [id])
+  parentId       String
+  subscription   Subscription  @relation(fields: [subscriptionId], references: [id])
+  subscriptionId String
+  amount         Float
+  method         PaymentMethod @default(BILLPLZ)
+  status         PaymentStatus @default(PENDING)
+  billplzBillId  String?
+  billplzUrl     String?
+  paidAt         DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+enum PaymentMethod {
+  BILLPLZ
+  MANUAL
+  BANK_TRANSFER
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+// ============================================================
+// SUBJECT ACCESS
+// ============================================================
+
+model StudentSubjectAccess {
+  id        String   @id @default(uuid())
+  student   Student  @relation(fields: [studentId], references: [id])
+  studentId String
+  subject   Subject
+
+  @@unique([studentId, subject])
+}
+
+// ============================================================
+// REFERRAL
+// ============================================================
+
+model Referral {
+  id                String         @id @default(uuid())
+  referrerStudent   Student        @relation("ReferralsSent", fields: [referrerStudentId], references: [id])
+  referrerStudentId String
+  referredStudent   Student        @relation("ReferralsReceived", fields: [referredStudentId], references: [id])
+  referredStudentId String
+  creditAmount      Float
+  recurring         Boolean        @default(true)
+  status            ReferralStatus @default(PENDING)
+  transactions      ZedCreditTransaction[]
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+}
+
+enum ReferralStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+}
+
+// ============================================================
+// ZED CREDIT
+// ============================================================
+
+model ZedCredit {
+  id               String                 @id @default(uuid())
+  student          Student                @relation(fields: [studentId], references: [id])
+  studentId        String                 @unique
+  balance          Float                  @default(0)
+  escrowLocked     Boolean                @default(true)
+  fundBalance      Float                  @default(0)
+  convertedToFund  Boolean                @default(false)
+  transactions     ZedCreditTransaction[]
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+}
+
+// ============================================================
+// ZED CREDIT TRANSACTION
+// ============================================================
+
+model ZedCreditTransaction {
+  id         String       @id @default(uuid())
+  credit     ZedCredit    @relation(fields: [creditId], references: [id])
+  creditId   String
+  student    Student      @relation(fields: [studentId], references: [id])
+  studentId  String
+  amount     Float
+  type       CreditTxType
+  referral   Referral?    @relation(fields: [referralId], references: [id])
+  referralId String?
+  note       String?
+  createdAt  DateTime     @default(now())
+}
+
+enum CreditTxType {
+  EARNED_REFERRAL
+  ESCROW_RELEASED
+  CONVERTED_TO_FUND
+  WITHDRAWN
+  ADJUSTED
+}
+
+// ============================================================
+// CHAT SESSION
+// ============================================================
+
+model ChatSession {
+  id        String    @id @default(uuid())
+  student   Student   @relation(fields: [studentId], references: [id])
+  studentId String
+  subject   Subject
+  messages  Message[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+// ============================================================
+// MESSAGE
+// ============================================================
+
+model Message {
+  id        String      @id @default(uuid())
+  session   ChatSession @relation(fields: [sessionId], references: [id])
+  sessionId String
+  role      MessageRole
+  content   String      @db.Text
+  tokens    Int?
+  createdAt DateTime    @default(now())
+}
+
+enum MessageRole {
+  STUDENT
+  ZED
+}
+
+// ============================================================
+// STUDENT SUBJECT PROGRESS
+// ============================================================
+
+model StudentSubjectProgress {
+  id              String    @id @default(uuid())
+  student         Student   @relation(fields: [studentId], references: [id])
+  studentId       String
+  subject         Subject
+  weakTopics      String[]
+  masteredTopics  String[]
+  totalSessions   Int       @default(0)
+  totalMessages   Int       @default(0)
+  lastStudied     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([studentId, subject])
+}
+
+// ============================================================
+// STUDENT MOOD LOG
+// ============================================================
+
+model StudentMoodLog {
+  id          String   @id @default(uuid())
+  student     Student  @relation(fields: [studentId], references: [id])
+  studentId   String
+  sessionId   String
+  moodSignal  String
+  moodSource  String   @db.Text
+  zedResponse String   @db.Text
+  createdAt   DateTime @default(now())
+}
+
+// ============================================================
+// STUDENT MILESTONE
+// ============================================================
+
+model StudentMilestone {
+  id        String   @id @default(uuid())
+  student   Student  @relation(fields: [studentId], references: [id])
+  studentId String
+  subject   Subject?
+  milestone String
+  createdAt DateTime @default(now())
+}
+
+// ============================================================
+// RAG — SUBJECT CONTENT
+// ============================================================
+
+model SubjectContent {
+  id         String      @id @default(uuid())
+  subject    Subject
+  form       FormLevel
+  chapter    String
+  topic      String
+  title      String
+  body       String      @db.Text
+  source     String?
+  embeddings Embedding[]
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+}
+
+// ============================================================
+// RAG — PAST YEAR QUESTIONS
+// ============================================================
+
+model PastYearQuestion {
+  id            String            @id @default(uuid())
+  subject       Subject
+  form          FormLevel
+  year          Int
+  questionNo    String?
+  question      String            @db.Text
+  markingScheme String            @db.Text
+  marks         Int?
+  embeddings    Embedding[]
+  attempts      QuestionAttempt[]
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+}
+
+// ============================================================
+// QUESTION ATTEMPT
+// ============================================================
+
+model QuestionAttempt {
+  id            String           @id @default(uuid())
+  student       Student          @relation(fields: [studentId], references: [id])
+  studentId     String
+  question      PastYearQuestion @relation(fields: [questionId], references: [id])
+  questionId    String
+  studentAnswer String           @db.Text
+  zedFeedback   String           @db.Text
+  score         Float?
+  maxScore      Float?
+  isCorrect     Boolean?
+  mistakeType   String?
+  createdAt     DateTime         @default(now())
+}
+
+// ============================================================
+// RAG — EMBEDDINGS
+// Run on Neon first: CREATE EXTENSION IF NOT EXISTS vector;
+// ============================================================
+
+model Embedding {
+  id             String            @id @default(uuid())
+  vector         Float[]
+  content        SubjectContent?   @relation(fields: [contentId], references: [id])
+  contentId      String?
+  pastQuestion   PastYearQuestion? @relation(fields: [pastQuestionId], references: [id])
+  pastQuestionId String?
+  createdAt      DateTime          @default(now())
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum Subject {
+  BM
+  ENGLISH
+  MATH
+  SCIENCE
+  SEJARAH
+}
+
+enum FormLevel {
+  FORM_4
+  FORM_5
+}
