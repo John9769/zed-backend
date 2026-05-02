@@ -17,11 +17,17 @@ app.get('/', (req, res) => {
   res.json({ success: true, message: 'Zed BE is alive 🧠' });
 });
 
-app.use('/api/auth',    require('./src/routes/auth.routes'));
-app.use('/api/admin',   require('./src/routes/admin.routes'));
-app.use('/api/zed',     require('./src/routes/zed.routes'));
-app.use('/api/payment', require('./src/routes/payment.routes'));
-app.use('/api/credit',  require('./src/routes/credit.routes'));
+const authRoutes = require('./src/routes/auth.routes');
+const adminRoutes = require('./src/routes/admin.routes');
+const zedRoutes = require('./src/routes/zed.routes');
+const paymentRoutes = require('./src/routes/payment.routes');
+const creditRoutes = require('./src/routes/credit.routes');
+
+app.use('/api/auth',    authRoutes.default || authRoutes);
+app.use('/api/admin',   adminRoutes.default || adminRoutes);
+app.use('/api/zed',     zedRoutes.default || zedRoutes);
+app.use('/api/payment', paymentRoutes.default || paymentRoutes);
+app.use('/api/credit',  creditRoutes.default || creditRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ success: false, message: `Route ${req.originalUrl} not found` });
