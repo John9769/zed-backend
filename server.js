@@ -20,7 +20,10 @@ app.use('/api/credit', require('./src/routes/credit.routes'));
 
 app.use(errorHandler);
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Zed BE running on port ${PORT}`);
-});
+// Local dev
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => console.log(`Zed BE running on port ${PORT}`));
+}
+
+module.exports = app;
