@@ -28,6 +28,7 @@ app.use('/api/admin',   adminRoutes.default || adminRoutes);
 app.use('/api/zed',     zedRoutes.default || zedRoutes);
 app.use('/api/payment', paymentRoutes.default || paymentRoutes);
 app.use('/api/credit',  creditRoutes.default || creditRoutes);
+app.use('/api/upload', require('./src/routes/upload.routes'));
 
 app.use((req, res) => {
   res.status(404).json({ success: false, message: `Route ${req.originalUrl} not found` });
