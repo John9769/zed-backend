@@ -103,7 +103,7 @@ const buildMemoryContext = async (studentId, subject) => {
 // BUILD ZED SYSTEM PROMPT
 // ============================================================
 
-const buildSystemPrompt = (student, subject, memoryContext, ragContext = '') => {
+const buildSystemPrompt = (student, subject, memoryContext, ragContext = '', pastYearContext = '') => {
   return `You are ZED — Zero Educational Divide. Malaysia's first AI Educational BFF for SPM students.
 You are NOT a generic chatbot. You are NOT GPT. You are ZED — built specifically for Malaysian Form 4 and Form 5 students.
 
@@ -176,6 +176,8 @@ ${memoryContext}
 
 ${ragContext}
 
+${pastYearContext}
+
 SUBJECT CONTEXT (${subject}):
 ${getSubjectContext(subject)}
 
@@ -202,6 +204,58 @@ const getSubjectContext = (subject) => {
     SEJARAH: 'Focus on SPM Sejarah — Kesultanan Melayu, Penjajahan, Kemerdekaan, Perlembagaan. Help with structured answers format — guide student to construct their own answers.'
   };
   return contexts[subject] || '';
+};
+
+// ============================================================
+// CHECK PAST YEAR MATCH
+// Checks if student question matches any past year SPM question
+// ============================================================
+
+const checkPastYearMatch = async (subject, message) => {
+  try {
+    const keywords = message.toLowerCase()
+      .replace(/[^a-zA-Z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 3)
+      .slice(0, 5);
+
+    if (keywords.length === 0) return '';
+
+    const matches = await prisma.pastYearQuestion.findMany({
+      where: {
+        subject,
+        OR: keywords.map(k => ({
+          OR: [
+            { question: { contains: k, mode: 'insensitive' } },
+            { markingScheme: { contains: k, mode: 'insensitive' } }
+          ]
+        }))
+      },
+      orderBy: { year: 'desc' },
+      take: 2
+    });
+
+    if (matches.length === 0) return '';
+
+    let pastYearBlock = `\n--- SPM PAST YEAR AWARENESS ---\n`;
+    pastYearBlock += `Zed has found that this topic appeared in past SPM papers.\n`;
+    pastYearBlock += `Use this information ONLY to enrich your teaching — NOT to predict.\n`;
+    pastYearBlock += `NEVER say "this will come out" or "high chance keluar".\n`;
+    pastYearBlock += `INSTEAD say something like: "Menarik — soalan jenis ni ada dalam SPM [year]. Maknanya examiner nilai topic ni. Jom faham betul-betul!"\n\n`;
+
+    matches.forEach(q => {
+      pastYearBlock += `SPM ${q.year}${q.questionNo ? ` (${q.questionNo})` : ''}:\n`;
+      pastYearBlock += `Question: ${q.question.substring(0, 200)}\n`;
+      pastYearBlock += `Marking Scheme: ${q.markingScheme.substring(0, 200)}\n\n`;
+    });
+
+    pastYearBlock += `--- END PAST YEAR AWARENESS ---\n`;
+    return pastYearBlock;
+
+  } catch (err) {
+    console.error('checkPastYearMatch error:', err.message);
+    return '';
+  }
 };
 
 // ============================================================
@@ -302,10 +356,11 @@ const sendMessage = async (req, res) => {
       }
     });
 
-    // 5. Build memory context + RAG context
-    const [memoryContext, ragContext] = await Promise.all([
+    // 5. Build memory context + RAG context + past year check
+    const [memoryContext, ragContext, pastYearContext] = await Promise.all([
       buildMemoryContext(studentId, subject),
-      buildRagContext(subject, message)
+      buildRagContext(subject, message),
+      checkPastYearMatch(subject, message)
     ]);
 
     // 6. Get student info
@@ -314,7 +369,7 @@ const sendMessage = async (req, res) => {
     });
 
     // 7. Build system prompt with memory
-    const systemPrompt = buildSystemPrompt(student, subject, memoryContext, ragContext);
+    const systemPrompt = buildSystemPrompt(student, subject, memoryContext, ragContext, pastYearContext);
 
     // 8. Build conversation history for Groq
     const conversationHistory = session.messages.map(msg => ({
