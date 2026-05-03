@@ -308,14 +308,26 @@ const sendMessage = async (req, res) => {
 
   try {
     // 1. Validate subject access
-    const hasAccess = await prisma.studentSubjectAccess.findUnique({
-      where: { studentId_subject: { studentId, subject } }
+    const student = await prisma.student.findUnique({
+      where: { id: studentId }
     });
 
-    if (!hasAccess) {
-      return res.status(403).json({
-        error: `You don't have access to ${subject}. Please upgrade your subscription.`
+    if (student.status === 'TRIAL') {
+      if (student.trialMessages >= 5) {
+        return res.status(403).json({
+          error: 'TRIAL_EXHAUSTED',
+          message: 'Cuba Zed dah habis. Minta ibu bapa subscribe untuk teruskan! 🚀'
+        });
+      }
+    } else {
+      const hasAccess = await prisma.studentSubjectAccess.findUnique({
+        where: { studentId_subject: { studentId, subject } }
       });
+      if (!hasAccess) {
+        return res.status(403).json({
+          error: `You don't have access to ${subject}. Please upgrade your subscription.`
+        });
+      }
     }
 
     // 2. Get or create chat session
@@ -368,10 +380,7 @@ const sendMessage = async (req, res) => {
       checkPastYearMatch(subject, message)
     ]);
 
-    // 6. Get student info
-    const student = await prisma.student.findUnique({
-      where: { id: studentId }
-    });
+    // 6. Student already fetched above
 
     // 7. Build system prompt
     const systemPrompt = buildSystemPrompt(student, subject, memoryContext, ragContext, pastYearContext);
@@ -431,7 +440,34 @@ const sendMessage = async (req, res) => {
       }
     });
 
-    // 12. Check milestones
+    // 12. Increment trial counter + fire WhatsApp on exhaustion
+    if (student.status === 'TRIAL') {
+      const newCount = student.trialMessages + 1;
+      await prisma.student.update({
+        where: { id: studentId },
+        data: { trialMessages: newCount }
+      });
+
+      if (newCount >= 5) {
+        const log = await prisma.studentApprovalLog.findFirst({
+          where: { studentId, action: 'TRIAL_STARTED' },
+          orderBy: { createdAt: 'desc' }
+        });
+        if (log?.note) {
+          const parentMatch = log.note.match(/Parent: ([^\s|]+)/);
+          const linkMatch = log.note.match(/PaymentLink: (.+)$/);
+          if (parentMatch && linkMatch) {
+            const { sendWhatsApp } = require('./authController');
+            await sendWhatsApp(
+              parentMatch[1],
+              `Salam 👋\n\nAnak anda baru sahaja menghabiskan 5 mesej percuma dengan *ZED* — AI Tutor SPM.\n\n🎯 Anak anda dah rasa sendiri macam mana Zed mengajar!\n\n✅ Subscribe sekarang untuk akses penuh:\n\n${linkMatch[1]}\n\n_ZED — Zero Educational Divide_`
+            );
+          }
+        }
+      }
+    }
+
+    // 13. Check milestones
     const newMilestones = await checkMilestone(
       studentId,
       subject,

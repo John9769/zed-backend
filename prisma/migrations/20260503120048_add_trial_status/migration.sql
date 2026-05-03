@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Student" ADD COLUMN     "trialMessages" INTEGER NOT NULL DEFAULT 0,
+ALTER COLUMN "status" SET DEFAULT 'TRIAL';

@@ -1,9 +1,8 @@
 // ============================================================
-// ZED PRISMA SCHEMA — PRODUCTION FINAL
+// ZED PRISMA SCHEMA — PRODUCTION
 // Platform: AI Educational BFF for Form 4 & Form 5 Malaysia
 // DB: Neon PostgreSQL | AI: Groq | WhatsApp: UltraMsg | Pay: Billplz
-// Registration: Student → WhatsApp Parent → Parent Pays → Student Active
-// No trial. No guest. No exceptions.
+// Registration: Student → TRIAL (5 free messages) → Parent pays → ACTIVE
 // ============================================================
 
 datasource db {
@@ -14,10 +13,6 @@ datasource db {
 generator client {
   provider = "prisma-client-js"
 }
-
-// ============================================================
-// ADMIN
-// ============================================================
 
 model Admin {
   id           String    @id @default(uuid())
@@ -33,13 +28,6 @@ enum AdminRole {
   SUPER_ADMIN
   STAFF
 }
-
-// ============================================================
-// PARENT
-// Parents are NOT users. They receive WhatsApp, pay, done.
-// No login. No password. Just a contact + payer record.
-// One parent can have multiple students (siblings).
-// ============================================================
 
 model Parent {
   id           String         @id @default(uuid())
@@ -59,10 +47,6 @@ enum ParentRelation {
   GUARDIAN
 }
 
-// ============================================================
-// STUDENT
-// ============================================================
-
 model Student {
   id                   String                   @id @default(uuid())
   name                 String
@@ -70,20 +54,16 @@ model Student {
   mobile               String                   @unique
   age                  Int?
   passwordHash         String
-
   parent               Parent                   @relation(fields: [parentId], references: [id])
   parentId             String
-
   parentApprovalToken  String?                  @unique
   parentTokenExpiry    DateTime?
   parentApprovedAt     DateTime?
-
   referralCode         String                   @unique
   inviteCode           String?
-
-  status               StudentStatus            @default(PENDING)
+  status               StudentStatus            @default(TRIAL)
+  trialMessages        Int                      @default(0)
   isFirstAdopter       Boolean                  @default(false)
-
   subscription         Subscription?
   subjectAccess        StudentSubjectAccess[]
   subjectProgress      StudentSubjectProgress[]
@@ -96,21 +76,17 @@ model Student {
   milestones           StudentMilestone[]
   questionAttempts     QuestionAttempt[]
   approvalLogs         StudentApprovalLog[]
-
   createdAt            DateTime                 @default(now())
   updatedAt            DateTime                 @updatedAt
 }
 
 enum StudentStatus {
+  TRIAL
   PENDING
   ACTIVE
   SUSPENDED
   EXPIRED
 }
-
-// ============================================================
-// STUDENT APPROVAL LOG
-// ============================================================
 
 model StudentApprovalLog {
   id          String   @id @default(uuid())
@@ -122,10 +98,6 @@ model StudentApprovalLog {
   ipAddress   String?
   createdAt   DateTime @default(now())
 }
-
-// ============================================================
-// SUBSCRIPTION
-// ============================================================
 
 model Subscription {
   id          String           @id @default(uuid())
@@ -145,10 +117,6 @@ enum SubscriptionTier {
   THREE_SUBJECTS
   FIVE_SUBJECTS
 }
-
-// ============================================================
-// PAYMENT
-// ============================================================
 
 model Payment {
   id             String        @id @default(uuid())
@@ -179,22 +147,13 @@ enum PaymentStatus {
   REFUNDED
 }
 
-// ============================================================
-// SUBJECT ACCESS
-// ============================================================
-
 model StudentSubjectAccess {
   id        String   @id @default(uuid())
   student   Student  @relation(fields: [studentId], references: [id])
   studentId String
   subject   Subject
-
   @@unique([studentId, subject])
 }
-
-// ============================================================
-// REFERRAL
-// ============================================================
 
 model Referral {
   id                String         @id @default(uuid())
@@ -216,10 +175,6 @@ enum ReferralStatus {
   EXPIRED
 }
 
-// ============================================================
-// ZED CREDIT
-// ============================================================
-
 model ZedCredit {
   id               String                 @id @default(uuid())
   student          Student                @relation(fields: [studentId], references: [id])
@@ -232,10 +187,6 @@ model ZedCredit {
   createdAt        DateTime               @default(now())
   updatedAt        DateTime               @updatedAt
 }
-
-// ============================================================
-// ZED CREDIT TRANSACTION
-// ============================================================
 
 model ZedCreditTransaction {
   id         String       @id @default(uuid())
@@ -259,10 +210,6 @@ enum CreditTxType {
   ADJUSTED
 }
 
-// ============================================================
-// CHAT SESSION
-// ============================================================
-
 model ChatSession {
   id        String    @id @default(uuid())
   student   Student   @relation(fields: [studentId], references: [id])
@@ -272,10 +219,6 @@ model ChatSession {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 }
-
-// ============================================================
-// MESSAGE
-// ============================================================
 
 model Message {
   id        String      @id @default(uuid())
@@ -292,10 +235,6 @@ enum MessageRole {
   ZED
 }
 
-// ============================================================
-// STUDENT SUBJECT PROGRESS
-// ============================================================
-
 model StudentSubjectProgress {
   id              String    @id @default(uuid())
   student         Student   @relation(fields: [studentId], references: [id])
@@ -308,13 +247,8 @@ model StudentSubjectProgress {
   lastStudied     DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
-
   @@unique([studentId, subject])
 }
-
-// ============================================================
-// STUDENT MOOD LOG
-// ============================================================
 
 model StudentMoodLog {
   id          String   @id @default(uuid())
@@ -327,10 +261,6 @@ model StudentMoodLog {
   createdAt   DateTime @default(now())
 }
 
-// ============================================================
-// STUDENT MILESTONE
-// ============================================================
-
 model StudentMilestone {
   id        String   @id @default(uuid())
   student   Student  @relation(fields: [studentId], references: [id])
@@ -339,10 +269,6 @@ model StudentMilestone {
   milestone String
   createdAt DateTime @default(now())
 }
-
-// ============================================================
-// RAG — SUBJECT CONTENT
-// ============================================================
 
 model SubjectContent {
   id         String      @id @default(uuid())
@@ -357,10 +283,6 @@ model SubjectContent {
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
 }
-
-// ============================================================
-// RAG — PAST YEAR QUESTIONS
-// ============================================================
 
 model PastYearQuestion {
   id            String            @id @default(uuid())
@@ -377,10 +299,6 @@ model PastYearQuestion {
   updatedAt     DateTime          @updatedAt
 }
 
-// ============================================================
-// QUESTION ATTEMPT
-// ============================================================
-
 model QuestionAttempt {
   id            String           @id @default(uuid())
   student       Student          @relation(fields: [studentId], references: [id])
@@ -396,11 +314,6 @@ model QuestionAttempt {
   createdAt     DateTime         @default(now())
 }
 
-// ============================================================
-// RAG — EMBEDDINGS
-// Run on Neon first: CREATE EXTENSION IF NOT EXISTS vector;
-// ============================================================
-
 model Embedding {
   id             String            @id @default(uuid())
   vector         Float[]
@@ -410,10 +323,6 @@ model Embedding {
   pastQuestionId String?
   createdAt      DateTime          @default(now())
 }
-
-// ============================================================
-// ENUMS
-// ============================================================
 
 enum Subject {
   BM

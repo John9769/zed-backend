@@ -4,10 +4,12 @@ const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
 
+const TRIAL_LIMIT = 5;
+
 // ============================================================
 // REGISTER STUDENT
-// Student fills form → system creates parent + student (PENDING)
-// → fires WhatsApp to parent with payment link
+// Student registers → TRIAL immediately → can chat 5 messages
+// WhatsApp to parent fires AFTER trial exhausted
 // ============================================================
 
 const registerStudent = async (req, res) => {
@@ -21,11 +23,10 @@ const registerStudent = async (req, res) => {
     parentWhatsapp,
     parentRelationship,
     inviteCode,
-    tier  // THREE_SUBJECTS or FIVE_SUBJECTS
+    tier
   } = req.body;
 
   try {
-    // 1. Check if student mobile already exists
     const existingStudent = await prisma.student.findUnique({
       where: { mobile: studentMobile }
     });
@@ -33,7 +34,6 @@ const registerStudent = async (req, res) => {
       return res.status(400).json({ error: 'Mobile number already registered.' });
     }
 
-    // 2. Check if parent whatsapp already exists — reuse if yes (siblings)
     let parent = await prisma.parent.findUnique({
       where: { whatsapp: parentWhatsapp }
     });
@@ -48,7 +48,6 @@ const registerStudent = async (req, res) => {
       });
     }
 
-    // 3. Validate invite code if provided
     let referrerStudent = null;
     if (inviteCode) {
       referrerStudent = await prisma.student.findUnique({
@@ -59,21 +58,15 @@ const registerStudent = async (req, res) => {
       }
     }
 
-    // 4. Hash password
     const passwordHash = await bcrypt.hash(studentPassword, 10);
-
-    // 5. Generate unique referral code for this student
-    const referralCode = uuidv4().split('-')[0].toUpperCase(); // e.g. A3F2B1
-
-    // 6. Generate parent approval token
+    const referralCode = uuidv4().split('-')[0].toUpperCase();
     const parentApprovalToken = uuidv4();
-    const parentTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24hrs
+    const parentTokenExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
-    // 7. Check first adopter status
     const totalStudents = await prisma.student.count();
     const isFirstAdopter = totalStudents < 10000;
 
-    // 8. Create student (PENDING)
+    // Create student as TRIAL — immediate access, no payment gate
     const student = await prisma.student.create({
       data: {
         name: studentName,
@@ -87,24 +80,31 @@ const registerStudent = async (req, res) => {
         parentApprovalToken,
         parentTokenExpiry,
         isFirstAdopter,
-        status: 'PENDING'
+        status: 'TRIAL',
+        trialMessages: 0
       }
     });
 
-    // 9. Build Billplz payment URL for parent
-    // Billplz will be wired later — for now store tier in token flow
+    // Store tier in token for later payment flow
     const paymentLink = `${process.env.FRONTEND_URL}/parent/approve?token=${parentApprovalToken}&tier=${tier}`;
 
-    // 10. Send WhatsApp to parent via UltraMsg
-    await sendWhatsApp(
-      parentWhatsapp,
-      `Salam ${parentName} 👋\n\nAnak anda *${studentName}* telah mendaftar di *ZED* — AI Tutor peribadi untuk SPM.\n\n✅ Klik link di bawah untuk tahu lebih lanjut dan aktifkan akaun anak anda:\n\n${paymentLink}\n\n_Link ini sah selama 24 jam._`
-    );
+    // WhatsApp to parent stored but NOT sent yet
+    // Will fire from zedController after trial exhausted
+    await prisma.studentApprovalLog.create({
+      data: {
+        studentId: student.id,
+        action: 'TRIAL_STARTED',
+        triggeredBy: 'SYSTEM',
+        note: `Parent: ${parentWhatsapp} | Tier: ${tier} | PaymentLink: ${paymentLink}`
+      }
+    });
 
     return res.status(201).json({
-      message: 'Registration successful. WhatsApp sent to parent for approval.',
+      message: 'Registration successful. You have 5 free messages with Zed!',
       studentId: student.id,
-      referralCode: student.referralCode
+      referralCode: student.referralCode,
+      trialMessages: 0,
+      trialLimit: TRIAL_LIMIT
     });
 
   } catch (error) {
@@ -115,7 +115,7 @@ const registerStudent = async (req, res) => {
 
 // ============================================================
 // LOGIN STUDENT
-// Only ACTIVE students can login
+// TRIAL + ACTIVE students can login
 // ============================================================
 
 const loginStudent = async (req, res) => {
@@ -148,12 +148,18 @@ const loginStudent = async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials.' });
     }
 
+    // TRIAL gets all 5 subjects to explore freely
+    // ACTIVE gets subjects based on subjectAccess
+    const subjects = student.status === 'TRIAL'
+      ? ['BM', 'ENGLISH', 'MATH', 'SCIENCE', 'SEJARAH']
+      : student.subjectAccess.map(s => s.subject);
+
     const token = jwt.sign(
       {
         studentId: student.id,
         name: student.name,
         status: student.status,
-        subjects: student.subjectAccess.map(s => s.subject)
+        subjects
       },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
@@ -168,7 +174,10 @@ const loginStudent = async (req, res) => {
         mobile: student.mobile,
         status: student.status,
         referralCode: student.referralCode,
-        subjects: student.subjectAccess.map(s => s.subject)
+        isFirstAdopter: student.isFirstAdopter,
+        trialMessages: student.trialMessages,
+        trialLimit: TRIAL_LIMIT,
+        subjects
       }
     });
 
@@ -188,14 +197,13 @@ const sendWhatsApp = async (to, message) => {
       `https://api.ultramsg.com/${process.env.ULTRAMSG_INSTANCE}/messages/chat`,
       {
         token: process.env.ULTRAMSG_TOKEN,
-        to: `60${to}`,  // Malaysia prefix
+        to: `60${to}`,
         body: message
       }
     );
   } catch (err) {
     console.error('UltraMsg error:', err.message);
-    // Don't crash registration if WhatsApp fails
   }
 };
 
-module.exports = { registerStudent, loginStudent };
+module.exports = { registerStudent, loginStudent, sendWhatsApp };
