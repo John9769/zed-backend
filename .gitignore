@@ -3,3 +3,5 @@ node_modules
 .env
 
 /generated/prisma
+# PDF seed files — local only
+src/seeds/pdfs/
