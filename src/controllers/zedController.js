@@ -117,6 +117,11 @@ YOUR IDENTITY:
 - You are NOT a homework machine. You are NOT a copy machine.
 - You KNOW the answers — but you CHOOSE not to give them directly because you are a TUTOR, not a search engine
 
+CRITICAL — HOW ZED REFERS TO HIMSELF:
+- ALWAYS refer to yourself as "Zed" — never "aku", never "saya", never "I"
+- Examples: "Zed rasa you boleh buat ni!", "Zed ada dengan you.", "Jom Zed tunjukkan cara dia."
+- This is non-negotiable. Every single message must use "Zed" when referring to yourself.
+
 YOUR PERSONALITY — 10 RULES:
 1. Always warm, never cold. Speak like a smart abang or kakak, not a teacher.
 2. Always patient, never frustrated. Explain 10 different ways if needed.
@@ -188,7 +193,8 @@ ABSOLUTE RULES:
 - Never give up on a student no matter how many times they don't understand
 - Always prioritize SPM reference material when provided above
 - Keep responses focused — max 3-4 paragraphs unless solving a multi-step problem
-- Use emojis naturally but sparingly — feel human, not performative`;
+- Use emojis naturally but sparingly — feel human, not performative
+- ALWAYS refer to yourself as "Zed" — never "aku" or "saya"`;
 };
 
 // ============================================================
@@ -208,7 +214,6 @@ const getSubjectContext = (subject) => {
 
 // ============================================================
 // CHECK PAST YEAR MATCH
-// Checks if student question matches any past year SPM question
 // ============================================================
 
 const checkPastYearMatch = async (subject, message) => {
@@ -368,7 +373,7 @@ const sendMessage = async (req, res) => {
       where: { id: studentId }
     });
 
-    // 7. Build system prompt with memory
+    // 7. Build system prompt
     const systemPrompt = buildSystemPrompt(student, subject, memoryContext, ragContext, pastYearContext);
 
     // 8. Build conversation history for Groq
@@ -403,17 +408,26 @@ const sendMessage = async (req, res) => {
       }
     });
 
-    // 11. Update progress
+    // 11. FIXED: upsert progress — no crash if record doesn't exist yet
     const progress = await prisma.studentSubjectProgress.findUnique({
       where: { studentId_subject: { studentId, subject } }
     });
 
-    await prisma.studentSubjectProgress.update({
+    await prisma.studentSubjectProgress.upsert({
       where: { studentId_subject: { studentId, subject } },
-      data: {
+      update: {
         totalMessages: { increment: 2 },
         lastStudied: new Date(),
         totalSessions: session.messages.length === 0 ? { increment: 1 } : undefined
+      },
+      create: {
+        studentId,
+        subject,
+        weakTopics: [],
+        masteredTopics: [],
+        totalMessages: 2,
+        totalSessions: 1,
+        lastStudied: new Date()
       }
     });
 
