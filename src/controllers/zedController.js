@@ -448,23 +448,7 @@ const sendMessage = async (req, res) => {
         data: { trialMessages: newCount }
       });
 
-      if (newCount >= 5) {
-        const log = await prisma.studentApprovalLog.findFirst({
-          where: { studentId, action: 'TRIAL_STARTED' },
-          orderBy: { createdAt: 'desc' }
-        });
-        if (log?.note) {
-          const parentMatch = log.note.match(/Parent: ([^\s|]+)/);
-          const linkMatch = log.note.match(/PaymentLink: (.+)$/);
-          if (parentMatch && linkMatch) {
-            const { sendWhatsApp } = require('./authController');
-            await sendWhatsApp(
-              parentMatch[1],
-              `Salam 👋\n\nAnak anda baru sahaja menghabiskan 5 mesej percuma dengan *ZED* — AI Tutor SPM.\n\n🎯 Anak anda dah rasa sendiri macam mana Zed mengajar!\n\n✅ Subscribe sekarang untuk akses penuh:\n\n${linkMatch[1]}\n\n_ZED — Zero Educational Divide_`
-            );
-          }
-        }
-      }
+      // WhatsApp fires only when student clicks "Dapatkan Kelulusan Ibu Bapa" button
     }
 
     // 13. Check milestones
@@ -478,7 +462,8 @@ const sendMessage = async (req, res) => {
       sessionId: session.id,
       reply: zedReply,
       mood: mood || null,
-      milestones: newMilestones.length > 0 ? newMilestones : null
+      milestones: newMilestones.length > 0 ? newMilestones : null,
+      trialMessages: student.status === 'TRIAL' ? student.trialMessages + 1 : undefined
     });
 
   } catch (error) {

@@ -9,7 +9,7 @@ const TRIAL_LIMIT = 5;
 // ============================================================
 // REGISTER STUDENT
 // Student registers → TRIAL immediately → can chat 5 messages
-// WhatsApp to parent fires AFTER trial exhausted
+// WhatsApp to parent fires ONLY when student clicks approval button
 // ============================================================
 
 const registerStudent = async (req, res) => {
@@ -61,12 +61,11 @@ const registerStudent = async (req, res) => {
     const passwordHash = await bcrypt.hash(studentPassword, 10);
     const referralCode = uuidv4().split('-')[0].toUpperCase();
     const parentApprovalToken = uuidv4();
-    const parentTokenExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+    const parentTokenExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     const totalStudents = await prisma.student.count();
     const isFirstAdopter = totalStudents < 10000;
 
-    // Create student as TRIAL — immediate access, no payment gate
     const student = await prisma.student.create({
       data: {
         name: studentName,
@@ -85,11 +84,8 @@ const registerStudent = async (req, res) => {
       }
     });
 
-    // Store tier in token for later payment flow
     const paymentLink = `${process.env.FRONTEND_URL}/parent/approve?token=${parentApprovalToken}&tier=${tier}`;
 
-    // WhatsApp to parent stored but NOT sent yet
-    // Will fire from zedController after trial exhausted
     await prisma.studentApprovalLog.create({
       data: {
         studentId: student.id,
@@ -116,6 +112,7 @@ const registerStudent = async (req, res) => {
 // ============================================================
 // LOGIN STUDENT
 // TRIAL + ACTIVE students can login
+// PENDING + SUSPENDED + EXPIRED are blocked
 // ============================================================
 
 const loginStudent = async (req, res) => {
@@ -148,8 +145,6 @@ const loginStudent = async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials.' });
     }
 
-    // TRIAL gets all 5 subjects to explore freely
-    // ACTIVE gets subjects based on subjectAccess
     const subjects = student.status === 'TRIAL'
       ? ['BM', 'ENGLISH', 'MATH', 'SCIENCE', 'SEJARAH']
       : student.subjectAccess.map(s => s.subject);
@@ -188,6 +183,72 @@ const loginStudent = async (req, res) => {
 };
 
 // ============================================================
+// REQUEST PARENT APPROVAL
+// Student clicks button → WhatsApp fires → status PENDING
+// ============================================================
+
+const requestParentApproval = async (req, res) => {
+  const studentId = req.student.studentId;
+
+  try {
+    const student = await prisma.student.findUnique({
+      where: { id: studentId }
+    });
+
+    if (!student) {
+      return res.status(404).json({ error: 'Student not found.' });
+    }
+
+    if (student.status !== 'TRIAL') {
+      return res.status(400).json({ error: 'Only TRIAL accounts can request approval.' });
+    }
+
+    const log = await prisma.studentApprovalLog.findFirst({
+      where: { studentId, action: 'TRIAL_STARTED' },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    if (!log?.note) {
+      return res.status(400).json({ error: 'Parent details not found.' });
+    }
+
+    const parentMatch = log.note.match(/Parent: ([^\s|]+)/);
+    const linkMatch = log.note.match(/PaymentLink: (.+)$/);
+
+    if (!parentMatch || !linkMatch) {
+      return res.status(400).json({ error: 'Parent details incomplete.' });
+    }
+
+    await sendWhatsApp(
+      parentMatch[1],
+      `Salam 👋\n\nAnak anda *${student.name}* telah mencuba *ZED* — AI Tutor SPM dan ingin teruskan pembelajaran!\n\n🎯 Anak anda dah rasa sendiri macam mana Zed mengajar!\n\n✅ Klik link di bawah untuk aktifkan akaun penuh:\n\n${linkMatch[1]}\n\n_ZED — Zero Educational Divide_`
+    );
+
+    await prisma.student.update({
+      where: { id: studentId },
+      data: { status: 'PENDING' }
+    });
+
+    await prisma.studentApprovalLog.create({
+      data: {
+        studentId,
+        action: 'APPROVAL_REQUESTED',
+        triggeredBy: 'STUDENT',
+        note: `Student requested parent approval. WhatsApp sent to ${parentMatch[1]}`
+      }
+    });
+
+    return res.status(200).json({
+      message: 'WhatsApp sent to parent. Please wait for approval.'
+    });
+
+  } catch (error) {
+    console.error('requestParentApproval error:', error);
+    return res.status(500).json({ error: 'Failed to send approval request.' });
+  }
+};
+
+// ============================================================
 // HELPER — Send WhatsApp via UltraMsg
 // ============================================================
 
@@ -206,4 +267,4 @@ const sendWhatsApp = async (to, message) => {
   }
 };
 
-module.exports = { registerStudent, loginStudent, sendWhatsApp };
+module.exports = { registerStudent, loginStudent, sendWhatsApp, requestParentApproval };
