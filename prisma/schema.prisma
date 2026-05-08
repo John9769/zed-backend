@@ -348,11 +348,13 @@ model Embedding {
 }
 
 enum Subject {
-  BM
-  ENGLISH
   MATH
+  ADD_MATH
   SCIENCE
-  SEJARAH
+  ADD_SCIENCE
+  BIOLOGY
+  PHYSICS
+  CHEMISTRY
 }
 
 enum FormLevel {
