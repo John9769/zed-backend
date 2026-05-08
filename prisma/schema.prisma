@@ -1,8 +1,9 @@
 // ============================================================
-// ZED PRISMA SCHEMA — PRODUCTION
+// ZED PRISMA SCHEMA — PRODUCTION v2
 // Platform: AI Educational BFF for Form 4 & Form 5 Malaysia
 // DB: Neon PostgreSQL | AI: Groq | WhatsApp: UltraMsg | Pay: Billplz
-// Registration: Student → TRIAL (5 free messages) → Parent pays → ACTIVE
+// Pricing: RM19.99/subject early bird → RM29.99/subject normal
+// Registration: Student → TRIAL (5 free messages) → Parent pays per subject → ACTIVE
 // ============================================================
 
 datasource db {
@@ -48,36 +49,36 @@ enum ParentRelation {
 }
 
 model Student {
-  id                   String                   @id @default(uuid())
-  name                 String
-  email                String?
-  mobile               String                   @unique
-  age                  Int?
-  passwordHash         String
-  parent               Parent                   @relation(fields: [parentId], references: [id])
-  parentId             String
-  parentApprovalToken  String?                  @unique
-  parentTokenExpiry    DateTime?
-  parentApprovedAt     DateTime?
-  referralCode         String                   @unique
-  inviteCode           String?
-  status               StudentStatus            @default(TRIAL)
-  trialMessages        Int                      @default(0)
-  isFirstAdopter       Boolean                  @default(false)
-  subscription         Subscription?
-  subjectAccess        StudentSubjectAccess[]
-  subjectProgress      StudentSubjectProgress[]
-  referralsSent        Referral[]               @relation("ReferralsSent")
-  referralsReceived    Referral[]               @relation("ReferralsReceived")
-  zedCredits           ZedCredit?
-  creditTransactions   ZedCreditTransaction[]
-  chatSessions         ChatSession[]
-  moodLogs             StudentMoodLog[]
-  milestones           StudentMilestone[]
-  questionAttempts     QuestionAttempt[]
-  approvalLogs         StudentApprovalLog[]
-  createdAt            DateTime                 @default(now())
-  updatedAt            DateTime                 @updatedAt
+  id                  String                   @id @default(uuid())
+  name                String
+  email               String?
+  mobile              String                   @unique
+  age                 Int?
+  passwordHash        String
+  parent              Parent                   @relation(fields: [parentId], references: [id])
+  parentId            String
+  parentApprovalToken String?                  @unique
+  parentTokenExpiry   DateTime?
+  parentApprovedAt    DateTime?
+  referralCode        String                   @unique
+  inviteCode          String?
+  status              StudentStatus            @default(TRIAL)
+  trialMessages       Int                      @default(0)
+  isFirstAdopter      Boolean                  @default(false)
+  subscriptions       SubjectSubscription[]
+  subjectAccess       StudentSubjectAccess[]
+  subjectProgress     StudentSubjectProgress[]
+  referralsSent       Referral[]               @relation("ReferralsSent")
+  referralsReceived   Referral[]               @relation("ReferralsReceived")
+  zedCredits          ZedCredit?
+  creditTransactions  ZedCreditTransaction[]
+  chatSessions        ChatSession[]
+  moodLogs            StudentMoodLog[]
+  milestones          StudentMilestone[]
+  questionAttempts    QuestionAttempt[]
+  approvalLogs        StudentApprovalLog[]
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
 }
 
 enum StudentStatus {
@@ -99,39 +100,49 @@ model StudentApprovalLog {
   createdAt   DateTime @default(now())
 }
 
-model Subscription {
-  id          String           @id @default(uuid())
-  tier        SubscriptionTier
+// ============================================================
+// PER-SUBJECT SUBSCRIPTION
+// One record per student per subject
+// Student can subscribe to 1 subject (RM19.99 early bird / RM29.99 normal)
+// and add more subjects independently at any time
+// ============================================================
+
+model SubjectSubscription {
+  id          String        @id @default(uuid())
+  student     Student       @relation(fields: [studentId], references: [id])
+  studentId   String
+  subject     Subject
+  priceType   PriceType     @default(EARLY_BIRD)
   price       Float
   startDate   DateTime
   endDate     DateTime
-  isActive    Boolean          @default(true)
-  student     Student          @relation(fields: [studentId], references: [id])
-  studentId   String           @unique
+  isActive    Boolean       @default(true)
   payments    Payment[]
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@unique([studentId, subject])
 }
 
-enum SubscriptionTier {
-  THREE_SUBJECTS
-  FIVE_SUBJECTS
+enum PriceType {
+  EARLY_BIRD   // RM19.99
+  NORMAL       // RM29.99
 }
 
 model Payment {
-  id             String        @id @default(uuid())
-  parent         Parent        @relation(fields: [parentId], references: [id])
+  id             String              @id @default(uuid())
+  parent         Parent              @relation(fields: [parentId], references: [id])
   parentId       String
-  subscription   Subscription  @relation(fields: [subscriptionId], references: [id])
+  subscription   SubjectSubscription @relation(fields: [subscriptionId], references: [id])
   subscriptionId String
   amount         Float
-  method         PaymentMethod @default(BILLPLZ)
-  status         PaymentStatus @default(PENDING)
+  method         PaymentMethod       @default(BILLPLZ)
+  status         PaymentStatus       @default(PENDING)
   billplzBillId  String?
   billplzUrl     String?
   paidAt         DateTime?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
 }
 
 enum PaymentMethod {
@@ -152,21 +163,32 @@ model StudentSubjectAccess {
   student   Student  @relation(fields: [studentId], references: [id])
   studentId String
   subject   Subject
+
   @@unique([studentId, subject])
 }
 
+// ============================================================
+// REFERRAL
+// RM5 per subject per month recurring
+// Referrer earns RM5 for each subject the referred student subscribes to
+// Example: referred student subscribes Math + Science = referrer earns RM10/month
+// ============================================================
+
 model Referral {
-  id                String         @id @default(uuid())
-  referrerStudent   Student        @relation("ReferralsSent", fields: [referrerStudentId], references: [id])
+  id                String               @id @default(uuid())
+  referrerStudent   Student              @relation("ReferralsSent", fields: [referrerStudentId], references: [id])
   referrerStudentId String
-  referredStudent   Student        @relation("ReferralsReceived", fields: [referredStudentId], references: [id])
+  referredStudent   Student              @relation("ReferralsReceived", fields: [referredStudentId], references: [id])
   referredStudentId String
-  creditAmount      Float
-  recurring         Boolean        @default(true)
-  status            ReferralStatus @default(PENDING)
+  subject           Subject
+  creditAmount      Float                @default(5.00)
+  recurring         Boolean              @default(true)
+  status            ReferralStatus       @default(PENDING)
   transactions      ZedCreditTransaction[]
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@unique([referrerStudentId, referredStudentId, subject])
 }
 
 enum ReferralStatus {
@@ -176,16 +198,16 @@ enum ReferralStatus {
 }
 
 model ZedCredit {
-  id               String                 @id @default(uuid())
-  student          Student                @relation(fields: [studentId], references: [id])
-  studentId        String                 @unique
-  balance          Float                  @default(0)
-  escrowLocked     Boolean                @default(true)
-  fundBalance      Float                  @default(0)
-  convertedToFund  Boolean                @default(false)
-  transactions     ZedCreditTransaction[]
-  createdAt        DateTime               @default(now())
-  updatedAt        DateTime               @updatedAt
+  id              String                 @id @default(uuid())
+  student         Student                @relation(fields: [studentId], references: [id])
+  studentId       String                 @unique
+  balance         Float                  @default(0)
+  escrowLocked    Boolean                @default(true)
+  fundBalance     Float                  @default(0)
+  convertedToFund Boolean                @default(false)
+  transactions    ZedCreditTransaction[]
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
 }
 
 model ZedCreditTransaction {
@@ -236,17 +258,18 @@ enum MessageRole {
 }
 
 model StudentSubjectProgress {
-  id              String    @id @default(uuid())
-  student         Student   @relation(fields: [studentId], references: [id])
-  studentId       String
-  subject         Subject
-  weakTopics      String[]
-  masteredTopics  String[]
-  totalSessions   Int       @default(0)
-  totalMessages   Int       @default(0)
-  lastStudied     DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id             String    @id @default(uuid())
+  student        Student   @relation(fields: [studentId], references: [id])
+  studentId      String
+  subject        Subject
+  weakTopics     String[]
+  masteredTopics String[]
+  totalSessions  Int       @default(0)
+  totalMessages  Int       @default(0)
+  lastStudied    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
   @@unique([studentId, subject])
 }
 

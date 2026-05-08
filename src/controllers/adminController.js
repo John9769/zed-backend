@@ -41,7 +41,7 @@ const getDashboard = async (req, res) => {
     const [
       totalStudents, activeStudents, pendingStudents, expiredStudents, suspendedStudents,
       totalParents, totalRevenue, firstAdopters, totalReferrals, activeReferrals,
-      totalSubjectContent, totalPastYearQuestions
+      totalSubjectContent, totalPastYearQuestions, totalActiveSubscriptions
     ] = await Promise.all([
       prisma.student.count(),
       prisma.student.count({ where: { status: 'ACTIVE' } }),
@@ -54,14 +54,24 @@ const getDashboard = async (req, res) => {
       prisma.referral.count(),
       prisma.referral.count({ where: { status: 'ACTIVE' } }),
       prisma.subjectContent.count(),
-      prisma.pastYearQuestion.count()
+      prisma.pastYearQuestion.count(),
+      prisma.subjectSubscription.count({ where: { isActive: true } })
     ]);
 
     return res.status(200).json({
-      students: { total: totalStudents, active: activeStudents, pending: pendingStudents, expired: expiredStudents, suspended: suspendedStudents, firstAdopters, slotsRemaining: Math.max(0, 10000 - firstAdopters) },
+      students: {
+        total: totalStudents,
+        active: activeStudents,
+        pending: pendingStudents,
+        expired: expiredStudents,
+        suspended: suspendedStudents,
+        firstAdopters,
+        slotsRemaining: Math.max(0, 10000 - firstAdopters)
+      },
       parents: { total: totalParents },
       revenue: { total: totalRevenue._sum.amount || 0 },
       referrals: { total: totalReferrals, active: activeReferrals },
+      subscriptions: { activeTotal: totalActiveSubscriptions },
       ragContent: { subjectContent: totalSubjectContent, pastYearQuestions: totalPastYearQuestions }
     });
   } catch (error) {
@@ -81,7 +91,13 @@ const getAllStudents = async (req, res) => {
   try {
     const where = {
       ...(status ? { status } : {}),
-      ...(search ? { OR: [{ name: { contains: search, mode: 'insensitive' } }, { mobile: { contains: search } }, { email: { contains: search, mode: 'insensitive' } }] } : {})
+      ...(search ? {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { mobile: { contains: search } },
+          { email: { contains: search, mode: 'insensitive' } }
+        ]
+      } : {})
     };
 
     const [students, total] = await Promise.all([
@@ -89,7 +105,10 @@ const getAllStudents = async (req, res) => {
         where, skip, take: parseInt(limit), orderBy: { createdAt: 'desc' },
         include: {
           parent: { select: { name: true, whatsapp: true, relationship: true } },
-          subscription: { select: { tier: true, isActive: true, endDate: true } },
+          subscriptions: {
+            where: { isActive: true },
+            select: { subject: true, priceType: true, price: true, endDate: true }
+          },
           subjectAccess: { select: { subject: true } },
           zedCredits: { select: { balance: true, fundBalance: true } }
         }
@@ -97,7 +116,15 @@ const getAllStudents = async (req, res) => {
       prisma.student.count({ where })
     ]);
 
-    return res.status(200).json({ students, pagination: { total, page: parseInt(page), limit: parseInt(limit), totalPages: Math.ceil(total / parseInt(limit)) } });
+    return res.status(200).json({
+      students,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(total / parseInt(limit))
+      }
+    });
   } catch (error) {
     console.error('getAllStudents error:', error.message);
     return res.status(500).json({ error: 'Failed to fetch students.' });
@@ -115,14 +142,22 @@ const getStudentDetail = async (req, res) => {
       where: { id: studentId },
       include: {
         parent: true,
-        subscription: { include: { payments: true } },
+        subscriptions: { include: { payments: true } },
         subjectAccess: true,
         subjectProgress: true,
-        zedCredits: { include: { transactions: { orderBy: { createdAt: 'desc' }, take: 10 } } },
-        referralsSent: { include: { referredStudent: { select: { name: true, status: true } } } },
+        zedCredits: {
+          include: { transactions: { orderBy: { createdAt: 'desc' }, take: 10 } }
+        },
+        referralsSent: {
+          include: {
+            referredStudent: { select: { name: true, status: true } }
+          }
+        },
         milestones: { orderBy: { createdAt: 'desc' } },
         approvalLogs: { orderBy: { createdAt: 'desc' } },
-        _count: { select: { chatSessions: true, questionAttempts: true, referralsSent: true } }
+        _count: {
+          select: { chatSessions: true, questionAttempts: true, referralsSent: true }
+        }
       }
     });
 
@@ -144,7 +179,12 @@ const suspendStudent = async (req, res) => {
   try {
     await prisma.student.update({ where: { id: studentId }, data: { status: 'SUSPENDED' } });
     await prisma.studentApprovalLog.create({
-      data: { studentId, action: 'SUSPENDED', triggeredBy: 'ADMIN_MANUAL', note: reason || 'No reason provided' }
+      data: {
+        studentId,
+        action: 'SUSPENDED',
+        triggeredBy: 'ADMIN_MANUAL',
+        note: reason || 'No reason provided'
+      }
     });
     return res.status(200).json({ message: 'Student suspended.' });
   } catch (error) {
@@ -154,19 +194,24 @@ const suspendStudent = async (req, res) => {
 };
 
 // ============================================================
-// ACTIVATE STUDENT
+// ACTIVATE STUDENT — manual override
 // ============================================================
 
 const activateStudent = async (req, res) => {
   const { studentId } = req.params;
   const { note } = req.body;
   try {
-    const student = await prisma.student.findUnique({ where: { id: studentId }, include: { subscription: true } });
+    const student = await prisma.student.findUnique({ where: { id: studentId } });
     if (!student) return res.status(404).json({ error: 'Student not found.' });
 
     await prisma.student.update({
       where: { id: studentId },
-      data: { status: 'ACTIVE', parentApprovedAt: new Date(), parentApprovalToken: null, parentTokenExpiry: null }
+      data: {
+        status: 'ACTIVE',
+        parentApprovedAt: new Date(),
+        parentApprovalToken: null,
+        parentTokenExpiry: null
+      }
     });
 
     await prisma.zedCredit.upsert({
@@ -176,7 +221,12 @@ const activateStudent = async (req, res) => {
     });
 
     await prisma.studentApprovalLog.create({
-      data: { studentId, action: 'ADMIN_ACTIVATED', triggeredBy: 'ADMIN_MANUAL', note: note || 'Manual activation by admin' }
+      data: {
+        studentId,
+        action: 'ADMIN_ACTIVATED',
+        triggeredBy: 'ADMIN_MANUAL',
+        note: note || 'Manual activation by admin'
+      }
     });
 
     return res.status(200).json({ message: 'Student activated.' });
@@ -270,7 +320,13 @@ const seedPastYearQuestion = async (req, res) => {
       return res.status(400).json({ error: 'subject, form, year, question and markingScheme are required.' });
 
     const paq = await prisma.pastYearQuestion.create({
-      data: { subject, form, year: parseInt(year), questionNo: questionNo || null, question, markingScheme, marks: marks ? parseInt(marks) : null }
+      data: {
+        subject, form,
+        year: parseInt(year),
+        questionNo: questionNo || null,
+        question, markingScheme,
+        marks: marks ? parseInt(marks) : null
+      }
     });
     return res.status(201).json({ message: 'Past year question seeded successfully.', question: paq });
   } catch (error) {
@@ -333,7 +389,10 @@ const getCredits = async (req, res) => {
     const totalCreditsInSystem = credits.reduce((sum, c) => sum + c.balance, 0);
     const totalFundInSystem = credits.reduce((sum, c) => sum + c.fundBalance, 0);
 
-    return res.status(200).json({ credits, summary: { totalCreditsInSystem, totalFundInSystem } });
+    return res.status(200).json({
+      credits,
+      summary: { totalCreditsInSystem, totalFundInSystem }
+    });
   } catch (error) {
     console.error('getCredits error:', error.message);
     return res.status(500).json({ error: 'Failed to fetch credits.' });
@@ -356,9 +415,7 @@ const getAllConversations = async (req, res) => {
 
     const [sessions, total] = await Promise.all([
       prisma.chatSession.findMany({
-        where,
-        skip,
-        take: parseInt(limit),
+        where, skip, take: parseInt(limit),
         orderBy: { updatedAt: 'desc' },
         include: {
           student: { select: { name: true, mobile: true, status: true } },
@@ -370,7 +427,12 @@ const getAllConversations = async (req, res) => {
 
     return res.status(200).json({
       sessions,
-      pagination: { total, page: parseInt(page), limit: parseInt(limit), totalPages: Math.ceil(total / parseInt(limit)) }
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(total / parseInt(limit))
+      }
     });
   } catch (error) {
     console.error('getAllConversations error:', error.message);

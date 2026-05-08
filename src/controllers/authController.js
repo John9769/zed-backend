@@ -5,10 +5,12 @@ const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
 
 const TRIAL_LIMIT = 5;
+const EARLY_BIRD_PRICE = 19.99;
+const NORMAL_PRICE = 29.99;
 
 // ============================================================
 // REGISTER STUDENT
-// Student registers → TRIAL immediately → can chat 5 messages
+// Student picks 1 subject → TRIAL immediately → 5 free messages
 // WhatsApp to parent fires ONLY when student clicks approval button
 // ============================================================
 
@@ -23,10 +25,19 @@ const registerStudent = async (req, res) => {
     parentWhatsapp,
     parentRelationship,
     inviteCode,
-    tier
+    subject
   } = req.body;
 
   try {
+    if (!subject) {
+      return res.status(400).json({ error: 'Please select a subject to subscribe.' });
+    }
+
+    const validSubjects = ['BM', 'ENGLISH', 'MATH', 'SCIENCE', 'SEJARAH'];
+    if (!validSubjects.includes(subject)) {
+      return res.status(400).json({ error: 'Invalid subject selected.' });
+    }
+
     const existingStudent = await prisma.student.findUnique({
       where: { mobile: studentMobile }
     });
@@ -65,6 +76,8 @@ const registerStudent = async (req, res) => {
 
     const totalStudents = await prisma.student.count();
     const isFirstAdopter = totalStudents < 10000;
+    const price = isFirstAdopter ? EARLY_BIRD_PRICE : NORMAL_PRICE;
+    const priceType = isFirstAdopter ? 'EARLY_BIRD' : 'NORMAL';
 
     const student = await prisma.student.create({
       data: {
@@ -84,14 +97,14 @@ const registerStudent = async (req, res) => {
       }
     });
 
-    const paymentLink = `${process.env.FRONTEND_URL}/parent/approve?token=${parentApprovalToken}&tier=${tier}`;
+    const paymentLink = `${process.env.FRONTEND_URL}/parent/approve?token=${parentApprovalToken}&subject=${subject}&price=${price}&priceType=${priceType}`;
 
     await prisma.studentApprovalLog.create({
       data: {
         studentId: student.id,
         action: 'TRIAL_STARTED',
         triggeredBy: 'SYSTEM',
-        note: `Parent: ${parentWhatsapp} | Tier: ${tier} | PaymentLink: ${paymentLink}`
+        note: `Parent: ${parentWhatsapp} | Subject: ${subject} | Price: RM${price} | PriceType: ${priceType} | PaymentLink: ${paymentLink}`
       }
     });
 
@@ -100,7 +113,10 @@ const registerStudent = async (req, res) => {
       studentId: student.id,
       referralCode: student.referralCode,
       trialMessages: 0,
-      trialLimit: TRIAL_LIMIT
+      trialLimit: TRIAL_LIMIT,
+      subject,
+      price,
+      priceType
     });
 
   } catch (error) {
@@ -111,7 +127,7 @@ const registerStudent = async (req, res) => {
 
 // ============================================================
 // LOGIN STUDENT
-// TRIAL + ACTIVE students can login
+// TRIAL + ACTIVE can login
 // PENDING + SUSPENDED + EXPIRED are blocked
 // ============================================================
 
@@ -121,7 +137,13 @@ const loginStudent = async (req, res) => {
   try {
     const student = await prisma.student.findUnique({
       where: { mobile },
-      include: { subjectAccess: true }
+      include: {
+        subjectAccess: true,
+        subscriptions: {
+          where: { isActive: true },
+          select: { subject: true, priceType: true, price: true, endDate: true }
+        }
+      }
     });
 
     if (!student) {
@@ -145,6 +167,8 @@ const loginStudent = async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials.' });
     }
 
+    // TRIAL gets access to all subjects for 5 messages
+    // ACTIVE gets only subscribed subjects
     const subjects = student.status === 'TRIAL'
       ? ['BM', 'ENGLISH', 'MATH', 'SCIENCE', 'SEJARAH']
       : student.subjectAccess.map(s => s.subject);
@@ -172,7 +196,8 @@ const loginStudent = async (req, res) => {
         isFirstAdopter: student.isFirstAdopter,
         trialMessages: student.trialMessages,
         trialLimit: TRIAL_LIMIT,
-        subjects
+        subjects,
+        subscriptions: student.subscriptions
       }
     });
 
@@ -209,19 +234,24 @@ const requestParentApproval = async (req, res) => {
     });
 
     if (!log?.note) {
-      return res.status(400).json({ error: 'Parent details not found.' });
+      return res.status(400).json({ error: 'Registration details not found.' });
     }
 
     const parentMatch = log.note.match(/Parent: ([^\s|]+)/);
+    const subjectMatch = log.note.match(/Subject: ([^\s|]+)/);
+    const priceMatch = log.note.match(/Price: RM([^\s|]+)/);
     const linkMatch = log.note.match(/PaymentLink: (.+)$/);
 
     if (!parentMatch || !linkMatch) {
       return res.status(400).json({ error: 'Parent details incomplete.' });
     }
 
+    const subjectLabel = subjectMatch ? subjectMatch[1] : 'subject pilihan';
+    const price = priceMatch ? priceMatch[1] : '19.99';
+
     await sendWhatsApp(
       parentMatch[1],
-      `Salam 👋\n\nAnak anda *${student.name}* telah mencuba *ZED* — AI Tutor SPM dan ingin teruskan pembelajaran!\n\n🎯 Anak anda dah rasa sendiri macam mana Zed mengajar!\n\n✅ Klik link di bawah untuk aktifkan akaun penuh:\n\n${linkMatch[1]}\n\n_ZED — Zero Educational Divide_`
+      `Salam 👋\n\nAnak anda *${student.name}* telah mencuba *ZED* — AI Tutor SPM!\n\n📚 Subject: *${subjectLabel}*\n💰 Harga Early Bird: *RM${price}/bulan*\n\n🎯 Anak anda dah rasa sendiri macam mana Zed mengajar. Kalau bagus, teruskan!\n\n✅ Klik link di bawah untuk aktifkan akaun:\n\n${linkMatch[1]}\n\n_ZED — Zero Educational Divide_`
     );
 
     await prisma.student.update({
@@ -234,7 +264,7 @@ const requestParentApproval = async (req, res) => {
         studentId,
         action: 'APPROVAL_REQUESTED',
         triggeredBy: 'STUDENT',
-        note: `Student requested parent approval. WhatsApp sent to ${parentMatch[1]}`
+        note: `WhatsApp sent to ${parentMatch[1]} for subject ${subjectLabel} at RM${price}`
       }
     });
 
@@ -245,6 +275,64 @@ const requestParentApproval = async (req, res) => {
   } catch (error) {
     console.error('requestParentApproval error:', error);
     return res.status(500).json({ error: 'Failed to send approval request.' });
+  }
+};
+
+// ============================================================
+// ADD SUBJECT
+// Active student adds another subject → creates new SubjectSubscription
+// Fires new payment link to parent
+// ============================================================
+
+const addSubject = async (req, res) => {
+  const studentId = req.student.studentId;
+  const { subject } = req.body;
+
+  try {
+    const validSubjects = ['BM', 'ENGLISH', 'MATH', 'SCIENCE', 'SEJARAH'];
+    if (!validSubjects.includes(subject)) {
+      return res.status(400).json({ error: 'Invalid subject.' });
+    }
+
+    const student = await prisma.student.findUnique({
+      where: { id: studentId },
+      include: {
+        parent: true,
+        subjectAccess: true,
+        subscriptions: true
+      }
+    });
+
+    if (!student) return res.status(404).json({ error: 'Student not found.' });
+    if (student.status !== 'ACTIVE') {
+      return res.status(403).json({ error: 'Only active students can add subjects.' });
+    }
+
+    const alreadySubscribed = student.subscriptions.find(s => s.subject === subject && s.isActive);
+    if (alreadySubscribed) {
+      return res.status(400).json({ error: `Already subscribed to ${subject}.` });
+    }
+
+    const price = student.isFirstAdopter ? EARLY_BIRD_PRICE : NORMAL_PRICE;
+    const priceType = student.isFirstAdopter ? 'EARLY_BIRD' : 'NORMAL';
+
+    const paymentLink = `${process.env.FRONTEND_URL}/parent/add-subject?studentId=${studentId}&subject=${subject}&price=${price}&priceType=${priceType}`;
+
+    await sendWhatsApp(
+      student.parent.whatsapp,
+      `Salam 👋\n\nAnak anda *${student.name}* ingin tambah subject baru di *ZED*!\n\n📚 Subject Baru: *${subject}*\n💰 Harga: *RM${price}/bulan*\n\n✅ Klik link untuk bayar dan aktifkan:\n\n${paymentLink}\n\n_ZED — Zero Educational Divide_`
+    );
+
+    return res.status(200).json({
+      message: `Payment link sent to parent for ${subject}.`,
+      subject,
+      price,
+      priceType
+    });
+
+  } catch (error) {
+    console.error('addSubject error:', error);
+    return res.status(500).json({ error: 'Failed to add subject.' });
   }
 };
 
@@ -267,4 +355,10 @@ const sendWhatsApp = async (to, message) => {
   }
 };
 
-module.exports = { registerStudent, loginStudent, sendWhatsApp, requestParentApproval };
+module.exports = {
+  registerStudent,
+  loginStudent,
+  sendWhatsApp,
+  requestParentApproval,
+  addSubject
+};

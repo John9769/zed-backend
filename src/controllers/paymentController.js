@@ -1,41 +1,29 @@
 const prisma = require('../lib/prisma');
 const axios = require('axios');
 
-// ============================================================
-// SUBJECT SEEDS PER TIER
-// ============================================================
-
-const TIER_SUBJECTS = {
-  THREE_SUBJECTS: ['BM', 'ENGLISH', 'MATH'],
-  FIVE_SUBJECTS: ['BM', 'ENGLISH', 'MATH', 'SCIENCE', 'SEJARAH']
-};
-
-const TIER_PRICE = {
-  THREE_SUBJECTS: 79.99,
-  FIVE_SUBJECTS: 99.00
-};
-
-const REFERRAL_CREDIT = {
-  THREE_SUBJECTS: 5.00,
-  FIVE_SUBJECTS: 10.00
-};
+const EARLY_BIRD_PRICE = 19.99;
+const NORMAL_PRICE = 29.99;
+const REFERRAL_CREDIT_PER_SUBJECT = 5.00;
 
 // ============================================================
 // CREATE BILL
-// Called when parent opens WhatsApp link
-// Validates token → creates Billplz bill → returns payment URL
+// Parent opens WhatsApp link → validates token → creates Billplz bill
+// One bill per subject
 // ============================================================
 
 const createBill = async (req, res) => {
-  const { token, tier } = req.body;
+  const { token, subject, priceType } = req.body;
 
   try {
-    // 1. Validate token
-    if (!token || !tier) {
-      return res.status(400).json({ error: 'Token and tier are required.' });
+    if (!token || !subject || !priceType) {
+      return res.status(400).json({ error: 'Token, subject and priceType are required.' });
     }
 
-    // 2. Find student by approval token
+    const validSubjects = ['BM', 'ENGLISH', 'MATH', 'SCIENCE', 'SEJARAH'];
+    if (!validSubjects.includes(subject)) {
+      return res.status(400).json({ error: 'Invalid subject.' });
+    }
+
     const student = await prisma.student.findUnique({
       where: { parentApprovalToken: token },
       include: { parent: true }
@@ -45,39 +33,33 @@ const createBill = async (req, res) => {
       return res.status(404).json({ error: 'Invalid or expired approval link.' });
     }
 
-    // 3. Check token expiry
     if (new Date() > student.parentTokenExpiry) {
-      return res.status(400).json({ error: 'Approval link has expired. Ask your child to register again.' });
+      return res.status(400).json({ error: 'Approval link expired. Ask your child to register again.' });
     }
 
-    // 4. Check student not already active
     if (student.status === 'ACTIVE') {
       return res.status(400).json({ error: 'Student is already active.' });
     }
 
-    // 5. Validate tier
-    if (!TIER_SUBJECTS[tier]) {
-      return res.status(400).json({ error: 'Invalid subscription tier.' });
-    }
-
-    const price = TIER_PRICE[tier];
+    const price = priceType === 'EARLY_BIRD' ? EARLY_BIRD_PRICE : NORMAL_PRICE;
     const parent = student.parent;
 
-    // 6. Create Billplz bill
     const billplzResponse = await axios.post(
       'https://www.billplz-sandbox.com/api/v3/bills',
       {
         collection_id: process.env.BILLPLZ_COLLECTION_ID,
-        description: `ZED Subscription - ${tier === 'THREE_SUBJECTS' ? '3 Core Subjects' : '5 Subjects'} for ${student.name}`,
+        description: `ZED — ${subject} for ${student.name} (${priceType === 'EARLY_BIRD' ? 'Early Bird' : 'Normal'})`,
         email: parent.email || 'noreply@zed.my',
         name: parent.name,
-        amount: Math.round(price * 100), // Billplz uses cents
+        amount: Math.round(price * 100),
         callback_url: `${process.env.BACKEND_URL}/api/payment/webhook`,
         redirect_url: `${process.env.FRONTEND_URL}/parent/payment-success`,
         reference_1_label: 'Student ID',
         reference_1: student.id,
-        reference_2_label: 'Tier',
-        reference_2: tier
+        reference_2_label: 'Subject',
+        reference_2: subject,
+        reference_3_label: 'PriceType',
+        reference_3: priceType
       },
       {
         auth: {
@@ -89,15 +71,15 @@ const createBill = async (req, res) => {
 
     const bill = billplzResponse.data;
 
-    // 7. Create pending subscription + payment record
-    const subscription = await prisma.subscription.create({
+    const subscription = await prisma.subjectSubscription.create({
       data: {
-        tier,
+        studentId: student.id,
+        subject,
+        priceType,
         price,
         startDate: new Date(),
-        endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
-        studentId: student.id,
-        isActive: false // not active until payment confirmed
+        endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        isActive: false
       }
     });
 
@@ -117,8 +99,9 @@ const createBill = async (req, res) => {
       message: 'Bill created successfully.',
       paymentUrl: bill.url,
       studentName: student.name,
-      tier,
-      price
+      subject,
+      price,
+      priceType
     });
 
   } catch (error) {
@@ -129,8 +112,7 @@ const createBill = async (req, res) => {
 
 // ============================================================
 // BILLPLZ WEBHOOK
-// Fires when parent pays
-// Activates student → seeds subjects → creates wallet → referral
+// Parent pays → activate subject → seed access → referral RM5
 // ============================================================
 
 const billplzWebhook = async (req, res) => {
@@ -140,15 +122,14 @@ const billplzWebhook = async (req, res) => {
       paid,
       paid_at,
       reference_1: studentId,
-      reference_2: tier
+      reference_2: subject,
+      reference_3: priceType
     } = req.body;
 
-    // 1. Only process successful payments
     if (paid !== 'true') {
       return res.status(200).json({ message: 'Payment not successful. Ignored.' });
     }
 
-    // 2. Find payment record
     const payment = await prisma.payment.findFirst({
       where: { billplzBillId: billId }
     });
@@ -157,12 +138,10 @@ const billplzWebhook = async (req, res) => {
       return res.status(404).json({ error: 'Payment record not found.' });
     }
 
-    // 3. Avoid duplicate processing
     if (payment.status === 'SUCCESS') {
       return res.status(200).json({ message: 'Already processed.' });
     }
 
-    // 4. Find student
     const student = await prisma.student.findUnique({
       where: { id: studentId }
     });
@@ -171,57 +150,51 @@ const billplzWebhook = async (req, res) => {
       return res.status(404).json({ error: 'Student not found.' });
     }
 
-    // 5. Run everything in a transaction
     await prisma.$transaction(async (tx) => {
 
-      // Update payment to SUCCESS
+      // Update payment
       await tx.payment.update({
         where: { id: payment.id },
-        data: {
-          status: 'SUCCESS',
-          paidAt: new Date(paid_at)
-        }
+        data: { status: 'SUCCESS', paidAt: new Date(paid_at) }
       });
 
-      // Activate subscription
-      await tx.subscription.update({
+      // Activate subject subscription
+      await tx.subjectSubscription.update({
         where: { id: payment.subscriptionId },
         data: { isActive: true }
       });
 
-      // Activate student
+      // Grant subject access
+      await tx.studentSubjectAccess.upsert({
+        where: { studentId_subject: { studentId, subject } },
+        update: {},
+        create: { studentId, subject }
+      });
+
+      // Seed subject progress
+      await tx.studentSubjectProgress.upsert({
+        where: { studentId_subject: { studentId, subject } },
+        update: {},
+        create: {
+          studentId,
+          subject,
+          weakTopics: [],
+          masteredTopics: []
+        }
+      });
+
+      // Activate student if first subject payment
       await tx.student.update({
         where: { id: studentId },
         data: {
           status: 'ACTIVE',
           parentApprovedAt: new Date(paid_at),
-          parentApprovalToken: null,  // invalidate token
+          parentApprovalToken: null,
           parentTokenExpiry: null
         }
       });
 
-      // Seed subject access based on tier
-      const subjects = TIER_SUBJECTS[tier] || TIER_SUBJECTS['THREE_SUBJECTS'];
-      await tx.studentSubjectAccess.createMany({
-        data: subjects.map(subject => ({
-          studentId,
-          subject
-        })),
-        skipDuplicates: true
-      });
-
-      // Seed subject progress records
-      await tx.studentSubjectProgress.createMany({
-        data: subjects.map(subject => ({
-          studentId,
-          subject,
-          weakTopics: [],
-          masteredTopics: []
-        })),
-        skipDuplicates: true
-      });
-
-      // Create ZedCredit wallet
+      // Create ZedCredit wallet if not exists
       await tx.zedCredit.upsert({
         where: { studentId },
         update: {},
@@ -233,56 +206,79 @@ const billplzWebhook = async (req, res) => {
         }
       });
 
-      // Log approval
+      // Log
       await tx.studentApprovalLog.create({
         data: {
           studentId,
           action: 'PARENT_PAID',
           triggeredBy: 'BILLPLZ_WEBHOOK',
-          note: `Bill ID: ${billId} | Tier: ${tier}`
+          note: `Bill ID: ${billId} | Subject: ${subject} | PriceType: ${priceType}`
         }
       });
 
-      // Handle referral — if student used an invite code
+      // Referral — RM5 per subject
       if (student.inviteCode) {
         const referrer = await tx.student.findUnique({
-          where: { referralCode: student.inviteCode },
-          include: { subscription: true }
+          where: { referralCode: student.inviteCode }
         });
 
         if (referrer && referrer.status === 'ACTIVE') {
-          const creditAmount = REFERRAL_CREDIT[tier] || 5.00;
 
-          // Create referral record
-          const referral = await tx.referral.create({
-            data: {
-              referrerStudentId: referrer.id,
-              referredStudentId: studentId,
-              creditAmount,
-              recurring: true,
-              status: 'ACTIVE'
+          // Avoid duplicate referral for same subject
+          const existingReferral = await tx.referral.findUnique({
+            where: {
+              referrerStudentId_referredStudentId_subject: {
+                referrerStudentId: referrer.id,
+                referredStudentId: studentId,
+                subject
+              }
             }
           });
 
-          // Credit referrer wallet
-          await tx.zedCredit.update({
-            where: { studentId: referrer.id },
-            data: {
-              balance: { increment: creditAmount }
-            }
-          });
+          if (!existingReferral) {
+            const referral = await tx.referral.create({
+              data: {
+                referrerStudentId: referrer.id,
+                referredStudentId: studentId,
+                subject,
+                creditAmount: REFERRAL_CREDIT_PER_SUBJECT,
+                recurring: true,
+                status: 'ACTIVE'
+              }
+            });
 
-          // Log transaction
-          await tx.zedCreditTransaction.create({
-            data: {
-              creditId: (await tx.zedCredit.findUnique({ where: { studentId: referrer.id } })).id,
-              studentId: referrer.id,
-              amount: creditAmount,
-              type: 'EARNED_REFERRAL',
-              referralId: referral.id,
-              note: `Referral credit from ${student.name} joining`
-            }
-          });
+            // Ensure referrer wallet exists
+            await tx.zedCredit.upsert({
+              where: { studentId: referrer.id },
+              update: {},
+              create: {
+                studentId: referrer.id,
+                balance: 0,
+                fundBalance: 0,
+                escrowLocked: true
+              }
+            });
+
+            const referrerWallet = await tx.zedCredit.findUnique({
+              where: { studentId: referrer.id }
+            });
+
+            await tx.zedCredit.update({
+              where: { studentId: referrer.id },
+              data: { balance: { increment: REFERRAL_CREDIT_PER_SUBJECT } }
+            });
+
+            await tx.zedCreditTransaction.create({
+              data: {
+                creditId: referrerWallet.id,
+                studentId: referrer.id,
+                amount: REFERRAL_CREDIT_PER_SUBJECT,
+                type: 'EARNED_REFERRAL',
+                referralId: referral.id,
+                note: `RM5 referral — ${student.name} subscribed ${subject}`
+              }
+            });
+          }
         }
       }
     });

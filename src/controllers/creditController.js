@@ -22,28 +22,31 @@ const getMyCredits = async (req, res) => {
       return res.status(404).json({ error: 'Wallet not found.' });
     }
 
-    // Count active referrals
-    const activeReferrals = await prisma.referral.count({
-      where: {
-        referrerStudentId: studentId,
-        status: 'ACTIVE'
-      }
-    });
-
-    // Calculate monthly earning potential
-    const referralDetails = await prisma.referral.findMany({
-      where: {
-        referrerStudentId: studentId,
-        status: 'ACTIVE'
-      },
+    // All active referrals grouped by referred student
+    const activeReferrals = await prisma.referral.findMany({
+      where: { referrerStudentId: studentId, status: 'ACTIVE' },
       include: {
-        referredStudent: { select: { name: true } }
+        referredStudent: { select: { name: true, mobile: true } }
       }
     });
 
-    const monthlyEarning = referralDetails.reduce(
-      (sum, r) => sum + r.creditAmount, 0
-    );
+    // RM5 per active referral per subject
+    const monthlyEarning = activeReferrals.reduce((sum, r) => sum + r.creditAmount, 0);
+
+    // Group by referred student for clean display
+    const friendMap = {};
+    for (const r of activeReferrals) {
+      const key = r.referredStudentId;
+      if (!friendMap[key]) {
+        friendMap[key] = {
+          friendName: r.referredStudent.name,
+          subjects: [],
+          totalMonthly: 0
+        };
+      }
+      friendMap[key].subjects.push(r.subject);
+      friendMap[key].totalMonthly += r.creditAmount;
+    }
 
     return res.status(200).json({
       wallet: {
@@ -53,13 +56,9 @@ const getMyCredits = async (req, res) => {
         convertedToFund: credit.convertedToFund
       },
       referrals: {
-        active: activeReferrals,
+        activeCount: activeReferrals.length,
         monthlyEarning,
-        details: referralDetails.map(r => ({
-          friendName: r.referredStudent.name,
-          creditAmount: r.creditAmount,
-          status: r.status
-        }))
+        friends: Object.values(friendMap)
       },
       recentTransactions: credit.transactions
     });
@@ -80,13 +79,8 @@ const getMyTransactions = async (req, res) => {
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
   try {
-    const credit = await prisma.zedCredit.findUnique({
-      where: { studentId }
-    });
-
-    if (!credit) {
-      return res.status(404).json({ error: 'Wallet not found.' });
-    }
+    const credit = await prisma.zedCredit.findUnique({ where: { studentId } });
+    if (!credit) return res.status(404).json({ error: 'Wallet not found.' });
 
     const [transactions, total] = await Promise.all([
       prisma.zedCreditTransaction.findMany({
@@ -116,21 +110,21 @@ const getMyTransactions = async (req, res) => {
 
 // ============================================================
 // PROCESS MONTHLY REFERRAL CREDITS
-// Admin triggers this every month (or cron job)
-// Pays all active referrers their recurring RM5/RM10
+// Admin triggers monthly — RM5 per active referral per subject
 // ============================================================
 
 const processMonthlyReferralCredits = async (req, res) => {
   try {
-    // Get all active referrals
     const activeReferrals = await prisma.referral.findMany({
       where: { status: 'ACTIVE', recurring: true },
       include: {
-        referrerStudent: {
-          include: { zedCredits: true }
-        },
+        referrerStudent: { include: { zedCredits: true } },
         referredStudent: {
-          include: { subscription: true }
+          include: {
+            subscriptions: {
+              where: { isActive: true }
+            }
+          }
         }
       }
     });
@@ -145,10 +139,12 @@ const processMonthlyReferralCredits = async (req, res) => {
 
     for (const referral of activeReferrals) {
       try {
-        // Check referred student subscription is still active
-        const sub = referral.referredStudent.subscription;
-        if (!sub || !sub.isActive || new Date() > sub.endDate) {
-          // Expire this referral
+        // Check referred student still has active subscription for this subject
+        const activeSub = referral.referredStudent.subscriptions.find(
+          s => s.subject === referral.subject && s.isActive && new Date() < s.endDate
+        );
+
+        if (!activeSub) {
           await prisma.referral.update({
             where: { id: referral.id },
             data: { status: 'EXPIRED' }
@@ -157,7 +153,6 @@ const processMonthlyReferralCredits = async (req, res) => {
           continue;
         }
 
-        // Check referrer still active
         if (referral.referrerStudent.status !== 'ACTIVE') {
           skipped++;
           continue;
@@ -169,7 +164,6 @@ const processMonthlyReferralCredits = async (req, res) => {
           continue;
         }
 
-        // Credit referrer
         await prisma.$transaction(async (tx) => {
           await tx.zedCredit.update({
             where: { studentId: referral.referrerStudentId },
@@ -183,7 +177,7 @@ const processMonthlyReferralCredits = async (req, res) => {
               amount: referral.creditAmount,
               type: 'EARNED_REFERRAL',
               referralId: referral.id,
-              note: `Monthly referral credit — ${new Date().toLocaleString('en-MY', { month: 'long', year: 'numeric' })}`
+              note: `Monthly referral — ${referral.subject} — ${new Date().toLocaleString('en-MY', { month: 'long', year: 'numeric' })}`
             }
           });
         });
@@ -192,11 +186,12 @@ const processMonthlyReferralCredits = async (req, res) => {
         results.push({
           referrerId: referral.referrerStudentId,
           referrerName: referral.referrerStudent.name,
+          subject: referral.subject,
           amount: referral.creditAmount
         });
 
       } catch (err) {
-        console.error(`Failed to process referral ${referral.id}:`, err.message);
+        console.error(`Failed referral ${referral.id}:`, err.message);
         skipped++;
       }
     }
@@ -223,17 +218,9 @@ const releaseEscrow = async (req, res) => {
   const { note } = req.body;
 
   try {
-    const credit = await prisma.zedCredit.findUnique({
-      where: { studentId }
-    });
-
-    if (!credit) {
-      return res.status(404).json({ error: 'Wallet not found.' });
-    }
-
-    if (!credit.escrowLocked) {
-      return res.status(400).json({ error: 'Escrow already released.' });
-    }
+    const credit = await prisma.zedCredit.findUnique({ where: { studentId } });
+    if (!credit) return res.status(404).json({ error: 'Wallet not found.' });
+    if (!credit.escrowLocked) return res.status(400).json({ error: 'Escrow already released.' });
 
     await prisma.$transaction(async (tx) => {
       await tx.zedCredit.update({
@@ -252,7 +239,7 @@ const releaseEscrow = async (req, res) => {
       });
     });
 
-    return res.status(200).json({ message: 'Escrow released. Student can now convert credits to Zed Fund.' });
+    return res.status(200).json({ message: 'Escrow released.' });
 
   } catch (error) {
     console.error('releaseEscrow error:', error.message);
@@ -262,34 +249,24 @@ const releaseEscrow = async (req, res) => {
 
 // ============================================================
 // CONVERT TO FUND — Student converts credit balance to Zed Fund
-// Only allowed after escrow is released by admin
+// Only after escrow released by admin
 // ============================================================
 
 const convertToFund = async (req, res) => {
   const studentId = req.student.studentId;
 
   try {
-    const credit = await prisma.zedCredit.findUnique({
-      where: { studentId }
-    });
-
-    if (!credit) {
-      return res.status(404).json({ error: 'Wallet not found.' });
-    }
+    const credit = await prisma.zedCredit.findUnique({ where: { studentId } });
+    if (!credit) return res.status(404).json({ error: 'Wallet not found.' });
 
     if (credit.escrowLocked) {
       return res.status(403).json({
-        error: 'Your Zed Fund is still locked. Keep referring friends and studying — admin will release it soon! 💪'
+        error: 'Your Zed Fund is still locked. Keep referring friends — admin will release it soon! 💪'
       });
     }
 
-    if (credit.balance <= 0) {
-      return res.status(400).json({ error: 'No credits to convert.' });
-    }
-
-    if (credit.convertedToFund) {
-      return res.status(400).json({ error: 'Already converted to Zed Fund.' });
-    }
+    if (credit.balance <= 0) return res.status(400).json({ error: 'No credits to convert.' });
+    if (credit.convertedToFund) return res.status(400).json({ error: 'Already converted to Zed Fund.' });
 
     const amountToConvert = credit.balance;
 
@@ -315,7 +292,7 @@ const convertToFund = async (req, res) => {
     });
 
     return res.status(200).json({
-      message: `RM${amountToConvert.toFixed(2)} successfully converted to your Zed Fund! This is your future. 🎓`,
+      message: `RM${amountToConvert.toFixed(2)} converted to your Zed Fund! This is your future. 🎓`,
       fundBalance: credit.fundBalance + amountToConvert
     });
 
