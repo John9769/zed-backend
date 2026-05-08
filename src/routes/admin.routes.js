@@ -15,10 +15,12 @@ const {
   deletePastYearQuestion,
   deleteSubjectContent,
   getReferrals,
-  getCredits
+  getCredits,
+  getAllConversations,
+  getConversationDetail
 } = require('../controllers/adminController');
 
-// Admin auth
+// Auth
 router.post('/login', adminLogin);
 
 // Dashboard
@@ -43,5 +45,9 @@ router.delete('/content/questions/:id', authenticateAdmin, deletePastYearQuestio
 // Credits & Referrals
 router.get('/referrals', authenticateAdmin, getReferrals);
 router.get('/credits', authenticateAdmin, getCredits);
+
+// Conversations
+router.get('/conversations', authenticateAdmin, getAllConversations);
+router.get('/conversations/:sessionId', authenticateAdmin, getConversationDetail);
 
 module.exports = router;
