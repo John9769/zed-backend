@@ -19,7 +19,7 @@ const createBill = async (req, res) => {
       return res.status(400).json({ error: 'Token, subject and priceType are required.' });
     }
 
-    const validSubjects = ['BM', 'ENGLISH', 'MATH', 'SCIENCE', 'SEJARAH'];
+    const validSubjects = ['MATH', 'ADD_MATH', 'SCIENCE', 'BIOLOGY', 'PHYSICS', 'CHEMISTRY', 'ADD_SCIENCE'];
     if (!validSubjects.includes(subject)) {
       return res.status(400).json({ error: 'Invalid subject.' });
     }

@@ -7,6 +7,7 @@ const axios = require('axios');
 const TRIAL_LIMIT = 5;
 const EARLY_BIRD_PRICE = 19.99;
 const NORMAL_PRICE = 29.99;
+const VALID_SUBJECTS = ['MATH', 'ADD_MATH', 'SCIENCE', 'BIOLOGY', 'PHYSICS', 'CHEMISTRY', 'ADD_SCIENCE'];
 
 // ============================================================
 // REGISTER STUDENT
@@ -33,8 +34,7 @@ const registerStudent = async (req, res) => {
       return res.status(400).json({ error: 'Please select a subject to subscribe.' });
     }
 
-    const validSubjects = ['BM', 'ENGLISH', 'MATH', 'SCIENCE', 'SEJARAH'];
-    if (!validSubjects.includes(subject)) {
+    if (!VALID_SUBJECTS.includes(subject)) {
       return res.status(400).json({ error: 'Invalid subject selected.' });
     }
 
@@ -167,10 +167,10 @@ const loginStudent = async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials.' });
     }
 
-    // TRIAL gets access to all subjects for 5 messages
+    // TRIAL gets access to all 7 subjects for 5 messages
     // ACTIVE gets only subscribed subjects
     const subjects = student.status === 'TRIAL'
-      ? ['BM', 'ENGLISH', 'MATH', 'SCIENCE', 'SEJARAH']
+      ? VALID_SUBJECTS
       : student.subjectAccess.map(s => s.subject);
 
     const token = jwt.sign(
@@ -289,8 +289,7 @@ const addSubject = async (req, res) => {
   const { subject } = req.body;
 
   try {
-    const validSubjects = ['BM', 'ENGLISH', 'MATH', 'SCIENCE', 'SEJARAH'];
-    if (!validSubjects.includes(subject)) {
+    if (!VALID_SUBJECTS.includes(subject)) {
       return res.status(400).json({ error: 'Invalid subject.' });
     }
 
