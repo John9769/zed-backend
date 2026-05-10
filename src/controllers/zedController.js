@@ -204,13 +204,46 @@ ABSOLUTE RULES:
 
 const getSubjectContext = (subject) => {
   const contexts = {
-    BM: 'Focus on Komsas, karangan formats (argumentatif, perbincangan, fakta), tatabahasa, peribahasa, and SPM paper formats. NEVER write karangan for student — always guide them to write it themselves.',
-    ENGLISH: 'Focus on literature (short stories, poems, novels), essay writing formats, summary writing, and grammar for SPM. NEVER write essays for student — always guide the thinking and structure.',
-    MATH: 'Focus on KSSM Form 4 and 5 topics: quadratic functions, progressions, trigonometry, permutations, probability distributions, linear programming. Always show working step by step — guide student through each step, never solve for them.',
-    SCIENCE: 'Focus on Biology, Chemistry, and Physics concepts at SPM level. Use real-world Malaysian examples where possible. Guide student to understand concepts — never just give answers.',
-    SEJARAH: 'Focus on SPM Sejarah — Kesultanan Melayu, Penjajahan, Kemerdekaan, Perlembagaan. Help with structured answers format — guide student to construct their own answers.'
+    MATH: `Subject: Mathematics (Matematik)
+Students may refer to this as "Math", "Matematik", or "Maths".
+Focus on KSSM Form 4 and 5 topics: quadratic functions, progressions, trigonometry, permutations, probability distributions, linear programming, statistics.
+Always show working step by step — guide student through each step, never solve for them.`,
+
+    ADD_MATH: `Subject: Additional Mathematics (Matematik Tambahan / Add Math)
+Students may refer to this as "Add Math", "Matematik Tambahan", "AddMath", or "MT".
+Focus on KSSM Form 4 topics: functions, quadratic functions, systems of equations, indices, surds, logarithms, progressions, linear law, coordinate geometry, vectors, solution of triangles, index numbers.
+Form 5 topics: circular measure, differentiation, integration, permutation and combination, probability distribution, trigonometric functions, linear programming, kinematics.
+Always guide step by step — never solve directly for student.`,
+
+    SCIENCE: `Subject: Science (Sains)
+Students may refer to this as "Science", "Sains", or "Sc".
+Focus on KSSM Form 4 and 5 integrated science topics covering biology, chemistry and physics basics, force and motion, nuclear energy, genetics, green technology.
+Use real-world Malaysian examples. Guide student to understand concepts — never just give answers.`,
+
+    BIOLOGY: `Subject: Biology (Biologi)
+Students may refer to this as "Biology", "Biologi", "Bio", or "Bi".
+Focus on KSSM Form 4 topics: cell biology, movement across plasma membrane, metabolism, enzymes, cell division, cellular respiration, respiratory systems, digestion, transport, immunity, coordination, homeostasis, support and movement, sexual reproduction.
+Form 5 topics: plant physiology, leaf structure, nutrition in plants, transport in plants, response in plants, sexual reproduction in flowering plants, biodiversity, ecosystem, environmental sustainability, inheritance, variation, genetic technology.
+Always guide Socratic — never give direct answers.`,
+
+    PHYSICS: `Subject: Physics (Fizik)
+Students may refer to this as "Physics", "Fizik", "Phy", or "Fiz".
+Focus on KSSM Form 4 topics: measurement, force and motion, gravitation, heat, waves, light and optics.
+Form 5 topics: force and motion II, pressure, electricity, electromagnetism, electronics, nuclear physics, quantum physics.
+Always show working with units and formula — guide student step by step never solve directly.`,
+
+    CHEMISTRY: `Subject: Chemistry (Kimia)
+Students may refer to this as "Chemistry", "Kimia", "Chem", or "Kim".
+Focus on KSSM Form 4 topics: introduction to chemistry, atomic structure, mole concept, periodic table, chemical bond, acid base salt, rate of reaction, manufactured substances.
+Form 5 topics: redox equilibrium, carbon compounds, thermochemistry, polymer, consumer and industrial chemistry.
+Always guide student to understand — never give direct answers.`,
+
+    ADD_SCIENCE: `Subject: Additional Science (Sains Tambahan)
+Students may refer to this as "Add Science", "Sains Tambahan", or "AS".
+Focus on advanced KSSM science concepts beyond the core Science syllabus.
+Guide student to understand and apply concepts — never give direct answers.`
   };
-  return contexts[subject] || '';
+  return contexts[subject] || `Subject: ${subject}. Guide student using Socratic method, never give direct answers.`;
 };
 
 // ============================================================
