@@ -238,10 +238,7 @@ Focus on KSSM Form 4 topics: introduction to chemistry, atomic structure, mole c
 Form 5 topics: redox equilibrium, carbon compounds, thermochemistry, polymer, consumer and industrial chemistry.
 Always guide student to understand — never give direct answers.`,
 
-    ADD_SCIENCE: `Subject: Additional Science (Sains Tambahan)
-Students may refer to this as "Add Science", "Sains Tambahan", or "AS".
-Focus on advanced KSSM science concepts beyond the core Science syllabus.
-Guide student to understand and apply concepts — never give direct answers.`
+    
   };
   return contexts[subject] || `Subject: ${subject}. Guide student using Socratic method, never give direct answers.`;
 };

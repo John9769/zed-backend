@@ -7,7 +7,7 @@ const axios = require('axios');
 const TRIAL_LIMIT = 5;
 const EARLY_BIRD_PRICE = 19.99;
 const NORMAL_PRICE = 29.99;
-const VALID_SUBJECTS = ['MATH', 'ADD_MATH', 'SCIENCE', 'BIOLOGY', 'PHYSICS', 'CHEMISTRY', 'ADD_SCIENCE'];
+const VALID_SUBJECTS = ['MATH', 'ADD_MATH', 'SCIENCE', 'BIOLOGY', 'PHYSICS', 'CHEMISTRY'];
 
 // ============================================================
 // REGISTER STUDENT
