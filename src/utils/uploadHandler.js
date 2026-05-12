@@ -38,15 +38,16 @@ const upload = multer({
 });
 
 // ============================================================
-// UPLOAD FILE TO CLOUDINARY — NO OCR
+// UPLOAD FILE TO CLOUDINARY — UNSIGNED PRESET
+// No signature generated. No signature error possible.
 // ============================================================
 
-const uploadToCloudinary = (buffer, mimetype, folder = 'zed_uploads') => {
+const uploadToCloudinary = (buffer, mimetype) => {
   return new Promise((resolve, reject) => {
     const resourceType = mimetype === 'application/pdf' ? 'raw' : 'image';
     const uploadStream = cloudinary.uploader.upload_stream(
       {
-        folder,
+        upload_preset: 'zed_uploads',
         resource_type: resourceType
       },
       (error, result) => {
@@ -61,7 +62,7 @@ const uploadToCloudinary = (buffer, mimetype, folder = 'zed_uploads') => {
 // ============================================================
 // EXTRACT TEXT FROM FILE
 // PDF → pdf-parse
-// Image → Tesseract.js (free OCR)
+// Image → Tesseract.js
 // ============================================================
 
 const extractTextFromFile = async (buffer, mimetype) => {
