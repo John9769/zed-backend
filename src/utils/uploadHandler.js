@@ -59,9 +59,28 @@ const uploadToCloudinary = (buffer, mimetype) => {
 };
 
 // ============================================================
+// FIX COMMON OCR MISREADINGS — MATH FOCUSED
+// ============================================================
+
+const fixOCRText = (text) => {
+  return text
+    .replace(/\bT\b/g, '7')
+    .replace(/\bl\b/g, '1')
+    .replace(/\bO\b/g, '0')
+    .replace(/\bS\b/g, '5')
+    .replace(/\bB\b/g, '8')
+    .replace(/\bG\b/g, '6')
+    .replace(/\bZ\b/g, '2')
+    .replace(/\bx\b/g, '×')
+    .replace(/X/g, '×')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+// ============================================================
 // EXTRACT TEXT FROM FILE
 // PDF → pdf-parse
-// Image → Tesseract.js
+// Image → Tesseract.js + OCR fix
 // ============================================================
 
 const extractTextFromFile = async (buffer, mimetype) => {
@@ -70,8 +89,10 @@ const extractTextFromFile = async (buffer, mimetype) => {
       const pdfData = await pdfParse(buffer);
       return pdfData.text || '';
     } else {
-      const { data: { text } } = await Tesseract.recognize(buffer, 'eng');
-      return text || '';
+      const { data: { text } } = await Tesseract.recognize(buffer, 'eng', {
+        tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+-×÷=()/.,'
+      });
+      return fixOCRText(text) || '';
     }
   } catch (err) {
     console.error('Text extraction error:', err.message);
