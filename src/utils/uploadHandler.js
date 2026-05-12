@@ -1,7 +1,7 @@
 const cloudinary = require('cloudinary').v2;
 const multer = require('multer');
 const pdfParse = require('pdf-parse');
-const path = require('path');
+const Tesseract = require('tesseract.js');
 
 // ============================================================
 // CLOUDINARY CONFIG
@@ -15,7 +15,6 @@ cloudinary.config({
 
 // ============================================================
 // MULTER — MEMORY STORAGE
-// Files stored in memory buffer, not disk
 // ============================================================
 
 const storage = multer.memoryStorage();
@@ -35,11 +34,11 @@ const fileFilter = (req, file, cb) => {
 const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB max
+  limits: { fileSize: 10 * 1024 * 1024 }
 });
 
 // ============================================================
-// UPLOAD FILE TO CLOUDINARY
+// UPLOAD FILE TO CLOUDINARY — NO OCR
 // ============================================================
 
 const uploadToCloudinary = (buffer, mimetype, folder = 'zed_uploads') => {
@@ -48,8 +47,7 @@ const uploadToCloudinary = (buffer, mimetype, folder = 'zed_uploads') => {
     const uploadStream = cloudinary.uploader.upload_stream(
       {
         folder,
-        resource_type: resourceType,
-        ocr: mimetype !== 'application/pdf' ? 'adv_ocr' : undefined
+        resource_type: resourceType
       },
       (error, result) => {
         if (error) reject(error);
@@ -63,18 +61,17 @@ const uploadToCloudinary = (buffer, mimetype, folder = 'zed_uploads') => {
 // ============================================================
 // EXTRACT TEXT FROM FILE
 // PDF → pdf-parse
-// Image → Cloudinary OCR result
+// Image → Tesseract.js (free OCR)
 // ============================================================
 
-const extractTextFromFile = async (buffer, mimetype, cloudinaryResult) => {
+const extractTextFromFile = async (buffer, mimetype) => {
   try {
     if (mimetype === 'application/pdf') {
       const pdfData = await pdfParse(buffer);
       return pdfData.text || '';
     } else {
-      // Get OCR text from Cloudinary result
-      const ocrText = cloudinaryResult?.info?.ocr?.adv_ocr?.data?.[0]?.fullTextAnnotation?.text || '';
-      return ocrText;
+      const { data: { text } } = await Tesseract.recognize(buffer, 'eng');
+      return text || '';
     }
   } catch (err) {
     console.error('Text extraction error:', err.message);
@@ -84,17 +81,13 @@ const extractTextFromFile = async (buffer, mimetype, cloudinaryResult) => {
 
 // ============================================================
 // PROCESS UPLOAD — MAIN FUNCTION
-// Upload file + extract text in one call
 // ============================================================
 
 const processUpload = async (file) => {
   const { buffer, mimetype, originalname } = file;
 
-  // Upload to Cloudinary
   const cloudinaryResult = await uploadToCloudinary(buffer, mimetype);
-
-  // Extract text
-  const extractedText = await extractTextFromFile(buffer, mimetype, cloudinaryResult);
+  const extractedText = await extractTextFromFile(buffer, mimetype);
 
   return {
     url: cloudinaryResult.secure_url,
